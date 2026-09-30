@@ -17,6 +17,7 @@ import (
 
 	"infinite-canvas/backend/internal/database"
 	"infinite-canvas/backend/internal/handler"
+	"infinite-canvas/backend/internal/integrations/cloooud"
 	"infinite-canvas/backend/internal/repository"
 	"infinite-canvas/backend/internal/service"
 	"infinite-canvas/backend/internal/updaterclient"
@@ -101,7 +102,8 @@ func run(ctx context.Context) error {
 	}
 	r := gin.New()
 	r.Use(gin.LoggerWithFormatter(func(param gin.LogFormatterParams) string {
-		return fmt.Sprintf("%s - [%s] \"%s %s\" %d %s %s\n", param.ClientIP, param.TimeStamp.Format(time.RFC3339), param.Method, redactCanvasSharePath(param.Path), param.StatusCode, param.Latency, param.ErrorMessage)
+		// 小洞 SSO：隐藏授权查询参数；脱敏实现见 backend/internal/integrations/cloooud/metadata.go。
+		return fmt.Sprintf("%s - [%s] \"%s %s\" %d %s %s\n", param.ClientIP, param.TimeStamp.Format(time.RFC3339), param.Method, redactCanvasSharePath(cloooud.RedactRequestPath(param.Path)), param.StatusCode, param.Latency, param.ErrorMessage)
 	}), gin.Recovery())
 	r.Use(handler.RequestCorrelationMiddleware())
 	corsMiddleware, err := cors()
@@ -115,6 +117,9 @@ func run(ctx context.Context) error {
 	registerSystemStatusRoutes(api, status)
 	handler.RegisterOAuthCallbackRoutes(r, svc)
 	handler.RegisterCanvasAPI(api, svc)
+	// 小洞 SSO：这里只装配数据库、原生登录和 HTTP 能力并注册路由。
+	// 核心模块及配置说明集中在 backend/internal/integrations/cloooud/（从 README.md 开始）。
+	cloooud.RegisterRoutes(api, cloooud.New(db, svc.CloooudHost()), handler.CloooudHTTPHost())
 	r.NoRoute(handler.SystemProxyNoRouteHandler(svc))
 
 	listener, err := net.Listen("tcp", addr)

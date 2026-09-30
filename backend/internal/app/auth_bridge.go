@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"infinite-canvas/backend/internal/auth"
+	"infinite-canvas/backend/internal/integrations/cloooud"
 	"infinite-canvas/backend/internal/model"
 )
 
@@ -120,6 +121,16 @@ func (s *Service) authDomain() *auth.Service {
 	domain := auth.New(s.repo, authHost{svc: s}, nil)
 	domain.SetSMSDelivery(s.smsDomain())
 	return domain
+}
+
+// CloooudHost 为小洞 SSO 提供原有用户校验、会话、新用户政策和活动记录能力。
+// 此处只连接宿主能力；核心流程见 backend/internal/integrations/cloooud/sso.go 和 native.go，
+// 配置与维护说明见该目录 README.md。
+func (s *Service) CloooudHost() cloooud.NativeHost {
+	return cloooud.NativeHost{
+		CurrentUser: s.CurrentUser, CreateSession: s.authDomain().SessionIssuer(),
+		EnsureSignupBonus: s.ensureSignupBonus, RecordActivity: s.recordActivity,
+	}
 }
 
 func (s *Service) PublicAuthSettings() (*PublicAuthSettings, error) {

@@ -59,6 +59,7 @@
 - [功能](content/docs/overview/features.mdx)
 - [本地开发](content/docs/backend/local-development.mdx)
 - [HTTP API 合同](content/docs/backend/http-api.mdx)
+- [小洞专用单点登录（定制模块）](../backend/internal/integrations/cloooud/README.md) <!-- 小洞 SSO：此处仅保留入口；核心代码、测试和配置说明集中在 backend/internal/integrations/cloooud/。 -->
 - [后端数据库](content/docs/backend/backend-database.mdx)
 - [代码地图](content/docs/backend/code-map.mdx)
 - [待办](content/docs/progress/todo.mdx)

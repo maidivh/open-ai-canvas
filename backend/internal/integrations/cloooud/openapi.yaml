@@ -1,0 +1,41 @@
+  /auth/cloooud/start:
+    get:
+      tags: [auth]
+      security: []
+      summary: 从小洞发起影策单点登录
+      description: 默认关闭。创建五分钟有效的浏览器 state Cookie 和 PKCE，跳转已配置的小洞授权页。首次启用前必须初始化影策本地管理员。
+      parameters:
+        - in: query
+          name: next
+          schema: {type: string, default: /create}
+          description: 安全的本站非认证路径，无效值回落到 /create
+      responses:
+        "302":
+          description: 跳转小洞授权页；响应禁止缓存
+          headers:
+            Location: {schema: {type: string}}
+            Set-Cookie: {schema: {type: string}, description: HttpOnly、SameSite=Lax 的 state Cookie}
+        "400": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "429": {$ref: "#/components/responses/Error"}
+  /auth/cloooud/callback:
+    get:
+      tags: [auth]
+      security: []
+      summary: 消费小洞单次授权码并建立影策会话
+      description: 要求匹配发起浏览器的 state Cookie。已有不同账号或无效旧 Cookie 时拒绝覆盖会话；不导入余额或管理员权限。
+      parameters:
+        - {in: query, name: state, required: true, schema: {type: string, pattern: '^[0-9a-f]{64}$'}}
+        - {in: query, name: code, required: true, schema: {type: string, pattern: '^[0-9a-f]{64}$'}}
+      responses:
+        "302":
+          description: 成功跳转安全本站路径并设置会话 Cookie；无会话时失败跳转登录页显示通用错误
+          headers:
+            Location: {schema: {type: string}}
+            Set-Cookie: {schema: {type: string}}
+        "403":
+          description: 既有会话下免登失败，保留明确错误且不替换原登录 Cookie
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ErrorEnvelope"}
+        "429": {$ref: "#/components/responses/Error"}

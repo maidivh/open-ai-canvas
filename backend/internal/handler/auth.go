@@ -13,11 +13,22 @@ import (
 	"strings"
 	"time"
 
+	"infinite-canvas/backend/internal/integrations/cloooud"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/service"
 
 	"github.com/gin-gonic/gin"
 )
+
+// CloooudHTTPHost 保留宿主 Cookie、错误信封和限流策略，供启动入口装配模块。
+// 此处只提供原有 HTTP 能力；小洞 SSO 路由实现在 backend/internal/integrations/cloooud/http.go，
+// 核心登录流程和配置说明见同目录 sso.go、README.md。
+func CloooudHTTPHost() cloooud.HTTPHost {
+	return cloooud.HTTPHost{
+		EnforceRateLimit: enforceRateLimit, Fail: failService,
+		SessionCookie: sessionCookie, SetSessionCookie: setSessionCookie,
+	}
+}
 
 func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 	registerChannelOrderRoutes(r, svc)

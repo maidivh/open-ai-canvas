@@ -333,6 +333,13 @@ func (s *Service) PublicAuthUser(user *model.User) (AuthUser, error) {
 	return result, nil
 }
 
+// SessionIssuer 向可信服务端集成提供原生会话能力；调用方必须先校验身份和用户状态。
+// 小洞 SSO 通过此入口复用会话生成规则；身份校验和登录编排在
+// backend/internal/integrations/cloooud/（sso.go、native.go；说明见 README.md）。
+func (s *Service) SessionIssuer() func(*model.User) (*AuthSessionResult, error) {
+	return s.createAuthSession
+}
+
 func (s *Service) createAuthSession(user *model.User) (*AuthSessionResult, error) {
 	publicUser, err := s.PublicAuthUser(user)
 	if err != nil {

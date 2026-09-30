@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 
+	"infinite-canvas/backend/internal/integrations/cloooud"
 	"infinite-canvas/backend/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -50,6 +51,8 @@ func RegisterCanvasAPI(api *gin.RouterGroup, svc *service.Service) {
 
 func RegisterOpenAPIRoutes(api *gin.RouterGroup) {
 	api.GET("/openapi.yaml", func(c *gin.Context) {
-		c.Data(http.StatusOK, "application/yaml; charset=utf-8", openAPISpec)
+		// 小洞 SSO：响应时合并模块接口声明，声明集中在 backend/internal/integrations/cloooud/openapi.yaml。
+		// 核心模块及接入说明见同目录 README.md。
+		c.Data(http.StatusOK, "application/yaml; charset=utf-8", cloooud.ExtendOpenAPI(openAPISpec))
 	})
 }
