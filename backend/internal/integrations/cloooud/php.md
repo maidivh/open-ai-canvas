@@ -21,6 +21,10 @@
 
 新增 `hthot_canvas_sso_code` 表保存 SHA-256 授权码摘要、site/member/client、callback、PKCE challenge、签发/到期/消费时间。有效期固定 60 秒，唯一索引防止摘要重复；事务内重新检查会员归属、状态及删除标记、站点状态与有效期，再通过条件更新保证最多成功兑换一次。表没有 Token、密码或客户端 secret 字段。维护时可按 `expires_at` 分批清理过期记录；本功能不新增计划任务。
 
+建表 SQL 已为全部 10 个字段添加中文 `COMMENT`，可直接在数据库工具中查看。`expires_at`、`consumed_at`、`create_time` 均为秒级 Unix 时间戳，`consumed_at=0` 表示尚未兑换。已存在但缺少字段注释的表，在确认结构与 `canvas_sso.sql` 一致并备份后，将 `niucloud/addon/ht_hot/sql/canvas_sso_comments.sql` 中的 `{{prefix}}` 替换为实际表前缀，只执行这个注释更新文件；无需重建表。重新执行 `CREATE TABLE IF NOT EXISTS` 不会补全已有表的注释。
+
+本地已执行注释更新，并逐项核对 10 个字段的注释、类型、默认值、排序规则、自增属性和索引；仅注释发生变化。执行前的表结构保存在影策 `.local/sso-config-backups/` 下，服务器数据库未执行此次更新。
+
 ## 协议
 
 三条 API 都使用小洞标准 `{code,data,msg}` 信封，成功 code=1；错误为非 2xx 与 code=0。SSO 控制器响应为 `Cache-Control: no-store`，不会将请求正文写入业务日志。独立路由不挂载 `ApiLog`，兑换错误也不会交给会记录请求参数的全局异常处理器。反向代理/APM 的请求体抓取和带查询参数的 callback 访问日志须由部署侧脱敏；不得记录 code、verifier、secret 或会员 Token。
