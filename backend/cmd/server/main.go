@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -18,6 +19,7 @@ import (
 	"infinite-canvas/backend/internal/database"
 	"infinite-canvas/backend/internal/handler"
 	"infinite-canvas/backend/internal/integrations/cloooud"
+	"infinite-canvas/backend/internal/logging"
 	"infinite-canvas/backend/internal/repository"
 	"infinite-canvas/backend/internal/service"
 	"infinite-canvas/backend/internal/updaterclient"
@@ -26,6 +28,11 @@ import (
 )
 
 func main() {
+	logConfig, err := logging.ConfigFromEnv()
+	if err != nil {
+		log.Fatal(err)
+	}
+	logging.Setup(logConfig)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	if err := run(ctx); err != nil {
@@ -96,15 +103,14 @@ func run(ctx context.Context) error {
 		return err
 	}
 	if summary, err := svc.MigrateLegacyStorage(); err != nil {
-		log.Printf("storage migration skipped after error: %v", err)
+		slog.Warn("storage migration skipped after error", "error", err)
 	} else if summary.Backup != "" {
-		log.Printf("storage migration completed: tasks=%d assets=%d projects=%d backup=%s", summary.Tasks, summary.Assets, summary.Projects, summary.Backup)
+		slog.Info("storage migration completed", "tasks", summary.Tasks, "assets", summary.Assets, "projects", summary.Projects, "backup", summary.Backup)
 	}
 	r := gin.New()
-	r.Use(gin.LoggerWithFormatter(func(param gin.LogFormatterParams) string {
-		// 小洞 SSO：隐藏授权查询参数；脱敏实现见 backend/internal/integrations/cloooud/metadata.go。
-		return fmt.Sprintf("%s - [%s] \"%s %s\" %d %s %s\n", param.ClientIP, param.TimeStamp.Format(time.RFC3339), param.Method, redactCanvasSharePath(cloooud.RedactRequestPath(param.Path)), param.StatusCode, param.Latency, param.ErrorMessage)
-	}), gin.Recovery())
+	// 访问日志：成功的查询类请求只在 debug 级别输出，避免轮询和列表查询把日志打爆。
+	// 小洞 SSO：授权查询参数不进日志；脱敏实现见 backend/internal/integrations/cloooud/metadata.go。
+	r.Use(logging.AccessLog(func(path string) string { return redactCanvasSharePath(cloooud.RedactRequestPath(path)) }), logging.Recovery())
 	r.Use(handler.RequestCorrelationMiddleware())
 	corsMiddleware, err := cors()
 	if err != nil {
@@ -138,7 +144,7 @@ func run(ctx context.Context) error {
 	status.markStarted()
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- httpServer.Serve(listener) }()
-	log.Printf("backend listening on %s", addr)
+	slog.Info("backend listening", "addr", addr)
 
 	var serveFailure error
 	select {
@@ -168,7 +174,7 @@ func run(ctx context.Context) error {
 	if err := errors.Join(shutdownFailures...); err != nil {
 		return err
 	}
-	log.Printf("backend stopped gracefully")
+	slog.Info("backend stopped gracefully")
 	return nil
 }
 
