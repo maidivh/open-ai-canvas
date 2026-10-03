@@ -5,7 +5,9 @@ FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS payment-package-build
 ARG GOPROXY=https://proxy.golang.org,direct
 ENV GOPROXY=$GOPROXY
 
-RUN apk add --no-cache nodejs unzip zip
+# 每个安装 apk 软件包的阶段单独换源，保留基础镜像原有的 Alpine 版本路径。
+RUN sed -i 's#https\?://dl-cdn.alpinelinux.org/alpine#https://mirrors.tuna.tsinghua.edu.cn/alpine#g' /etc/apk/repositories \
+    && apk add --no-cache nodejs unzip zip
 
 WORKDIR /src
 # 插件只下载实际依赖，不为四个小程序预取整个业务后端的模块图。
@@ -26,7 +28,8 @@ FROM alpine:3.22 AS payment-package-smoke
 
 ARG TARGETOS
 ARG TARGETARCH
-RUN apk add --no-cache unzip
+RUN sed -i 's#https\?://dl-cdn.alpinelinux.org/alpine#https://mirrors.tuna.tsinghua.edu.cn/alpine#g' /etc/apk/repositories \
+    && apk add --no-cache unzip
 COPY --from=payment-package-build /src/plugin-packages /app/plugin-packages
 RUN PAYMENT_PLUGIN_SMOKE_TEST=1 \
     sh /app/plugin-packages/verify-payment-packages.sh "$TARGETOS" "$TARGETARCH"
@@ -36,7 +39,8 @@ FROM golang:1.25-alpine AS backend-build
 ARG GOPROXY=https://proxy.golang.org,direct
 ENV GOPROXY=$GOPROXY
 
-RUN apk add --no-cache build-base
+RUN sed -i 's#https\?://dl-cdn.alpinelinux.org/alpine#https://mirrors.tuna.tsinghua.edu.cn/alpine#g' /etc/apk/repositories \
+    && apk add --no-cache build-base
 
 WORKDIR /src/backend
 COPY backend/go.mod backend/go.sum ./
@@ -67,7 +71,8 @@ RUN npm ci --omit=dev --ignore-scripts
 
 FROM node:22.19-alpine
 
-RUN apk add --no-cache ca-certificates tzdata wget \
+RUN sed -i 's#https\?://dl-cdn.alpinelinux.org/alpine#https://mirrors.tuna.tsinghua.edu.cn/alpine#g' /etc/apk/repositories \
+    && apk add --no-cache ca-certificates tzdata wget \
     && addgroup -S app \
     && adduser -S app -G app
 
