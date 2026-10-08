@@ -1,4 +1,5 @@
 import { apiBaseURL } from "@/services/api/request";
+import { userScopeHeaders } from "@/lib/user-scope";
 import { isSystemProxyBaseUrl, type AiConfig, type ChannelHeader } from "@/stores/use-config-store";
 
 type RelayConfig = Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat"> & { headers?: ChannelHeader[] };
@@ -12,6 +13,9 @@ export type ChannelRequest = {
 /** 自定义渠道统一经登录态后端中转，避免依赖第三方服务的浏览器 CORS。 */
 export function channelRequest(config: RelayConfig, upstreamUrl: string, headers: HeadersInit = {}): ChannelRequest {
     const normalizedHeaders = new Headers(headers);
+    // [小洞免登定制] 模型生成走独立 axios/fetch，不经过 request.ts 的统一拦截器。
+    // 系统与自定义渠道都在这里补页面账号头，避免旧标签借新 Cookie 发起生成或扣错账号积分。
+    for (const [name, value] of Object.entries(userScopeHeaders())) normalizedHeaders.set(name, value);
     if (isSystemProxyBaseUrl(config.baseUrl)) {
         return { url: upstreamUrl, headers: Object.fromEntries(normalizedHeaders.entries()), credentials: "include" };
     }

@@ -107,17 +107,6 @@ func (s *Service) CompleteCloooudLogin(ctx context.Context, stateValue, code, br
 	if err != nil {
 		return nil, err
 	}
-	// Cookie 在标签页间共享，旧画布可能仍保留原账号的数据，不能在后台替换为另一身份。
-	if currentSession != "" {
-		current, err := s.auth.CurrentUser(currentSession)
-		if err != nil {
-			return nil, kernel.Forbidden("请关闭其他影策标签页并退出原登录后重新进入")
-		}
-		identity, err := s.repo.UserIdentity(cloooudProvider, cloooudSubject(profile.Issuer, profile.SiteID, profile.MemberID))
-		if err != nil || identity.UserID != current.ID {
-			return nil, kernel.Forbidden("影策当前登录的是其他账号，请关闭其他影策标签页并退出原登录后重新进入")
-		}
-	}
 	user, err := s.cloooudUser(cfg, profile)
 	if err != nil {
 		return nil, err
@@ -128,6 +117,18 @@ func (s *Service) CompleteCloooudLogin(ctx context.Context, stateValue, code, br
 	session, err := s.completeNativeLogin(user.ID)
 	if err != nil {
 		return nil, err
+	}
+	// [小洞免登定制] 以本次小洞身份为准，替代原来的「已有其他账号就拒绝免登」。
+	// 验证和新会话创建成功后才注销本浏览器旧会话；其他设备的登录不受影响。
+	// 失效 Cookie 可直接覆盖，不能仅凭其中的会话 ID 删除未经验证的会话。
+	if currentSession != "" {
+		if _, currentErr := s.auth.CurrentUser(currentSession); currentErr == nil {
+			if err := s.auth.Logout(currentSession); err != nil {
+				// 旧会话注销失败时不下发新 Cookie，清理新会话后让调用方保留原登录并提示失败。
+				_ = s.auth.Logout(session.Session)
+				return nil, err
+			}
+		}
 	}
 	return &CloooudCallbackResult{Session: session, Next: safeCloooudNext(state.NextPath)}, nil
 }

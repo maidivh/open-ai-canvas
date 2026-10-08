@@ -127,8 +127,10 @@ func (s *Service) authDomain() *auth.Service {
 // 此处只连接宿主能力；核心流程见 backend/internal/integrations/cloooud/sso.go 和 native.go，
 // 配置与维护说明见该目录 README.md。
 func (s *Service) CloooudHost() cloooud.NativeHost {
+	// [小洞免登定制] 注入原生 Logout，让免登模块在新登录成功后注销本浏览器的旧会话。
+	// 不在模块中另写会话删除逻辑，注销失败时由 sso.go 撤销新会话并保留原登录。
 	return cloooud.NativeHost{
-		CurrentUser: s.CurrentUser, CreateSession: s.authDomain().SessionIssuer(),
+		CurrentUser: s.CurrentUser, Logout: s.Logout, CreateSession: s.authDomain().SessionIssuer(),
 		EnsureSignupBonus: s.ensureSignupBonus, RecordActivity: s.recordActivity,
 	}
 }

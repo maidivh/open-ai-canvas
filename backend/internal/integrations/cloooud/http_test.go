@@ -75,7 +75,7 @@ func TestCloooudHandlersSetHostOnlyCookiesAndRedirect(t *testing.T) {
 	if w.Code != 302 || w.Header().Get("Location") != "/create" || auth.browser != strings.Repeat("a", 64) {
 		t.Fatal("callback failed")
 	}
-	var sessionCookie, clearedState bool
+	var sessionCookie, clearedState, guardedWrites bool
 	for _, cookie := range w.Result().Cookies() {
 		if cookie.Name == nativeauth.SessionCookieName {
 			sessionCookie = cookie.HttpOnly && cookie.Secure && cookie.Domain == "" && cookie.Value == "session.secret"
@@ -83,8 +83,11 @@ func TestCloooudHandlersSetHostOnlyCookiesAndRedirect(t *testing.T) {
 		if cookie.Name == cloooudStateCookie {
 			clearedState = cookie.MaxAge < 0
 		}
+		if cookie.Name == AccountScopeCookie {
+			guardedWrites = cookie.Value == "1" && cookie.HttpOnly && cookie.Secure && cookie.Path == "/" && cookie.MaxAge > 0
+		}
 	}
-	if !sessionCookie || !clearedState {
+	if !sessionCookie || !clearedState || !guardedWrites {
 		t.Fatal("callback did not finish cookie lifecycle")
 	}
 }
@@ -97,7 +100,7 @@ func TestCloooudCallbackKeepsExistingAccountFailureVisible(t *testing.T) {
 	req.AddCookie(&http.Cookie{Name: cloooudStateCookie, Value: strings.Repeat("a", 64)})
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
-	if w.Code != http.StatusForbidden || w.Header().Get("Location") != "" || auth.currentSession != "original.session" || !strings.Contains(w.Body.String(), "关闭其他影策标签页") || strings.Contains(w.Body.String(), "private-diagnostic-sentinel") {
+	if w.Code != http.StatusForbidden || w.Header().Get("Location") != "" || auth.currentSession != "original.session" || !strings.Contains(w.Body.String(), "原登录状态已保留") || strings.Contains(w.Body.String(), "private-diagnostic-sentinel") {
 		t.Fatalf("account conflict must stay visible: %d %s", w.Code, w.Body.String())
 	}
 	for _, cookie := range w.Result().Cookies() {

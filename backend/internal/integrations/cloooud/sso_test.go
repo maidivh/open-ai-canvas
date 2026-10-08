@@ -122,7 +122,7 @@ func TestCloooudLoginBindsBrowserAndReusesIdentity(t *testing.T) {
 	}
 }
 
-func TestCloooudRefusesReplacingExistingBrowserAccount(t *testing.T) {
+func TestCloooudAutomaticallyReplacesExistingBrowserAccount(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"code": 1, "data": cloooudProfile{Issuer: "https://identity.example", SiteID: 1, MemberID: 42}})
 	}))
@@ -138,34 +138,26 @@ func TestCloooudRefusesReplacingExistingBrowserAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, cookie := range []string{session.Session, "invalid.stale-session"} {
-		start, err := svc.BeginCloooudLogin("/create")
+		start, err := svc.BeginCloooudLogin("/projects")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err = svc.CompleteCloooudLogin(context.Background(), start.BrowserState, strings.Repeat("c", 64), start.BrowserState, cookie); err == nil {
-			t.Fatal("SSO replaced an existing or unverifiable browser account")
+		result, err := svc.CompleteCloooudLogin(context.Background(), start.BrowserState, strings.Repeat("c", 64), start.BrowserState, cookie)
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	other := &model.User{ID: "other", Username: "other", Role: model.UserRoleUser, Status: model.UserStatusActive}
-	identity := &model.UserIdentity{ID: "other-identity", UserID: other.ID, Provider: cloooudProvider, Subject: cloooudSubject("https://identity.example", 1, 42)}
-	if err := svc.repo.CreateOAuthUser(other, identity); err != nil {
-		t.Fatal(err)
-	}
-	start, err := svc.BeginCloooudLogin("/create")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := svc.CompleteCloooudLogin(context.Background(), start.BrowserState, strings.Repeat("c", 64), start.BrowserState, session.Session); err == nil {
-		t.Fatal("SSO switched to an existing different mapped member")
+		if result.Session.User.ID == admin.ID || result.Next != "/projects" {
+			t.Fatal("SSO did not enter the current member's requested workspace")
+		}
+		if _, err := svc.auth.CurrentUser(session.Session); err == nil {
+			t.Fatal("old browser session remains usable after switching")
+		}
 	}
 	var users, sessions int64
 	db.Model(&model.User{}).Count(&users)
 	db.Model(&model.AuthSession{}).Count(&sessions)
-	if users != 2 || sessions != 1 {
-		t.Fatalf("failed switch wrote users/sessions: %d/%d", users, sessions)
-	}
-	if user, err := svc.auth.CurrentUser(session.Session); err != nil || user.ID != admin.ID {
-		t.Fatal("failed switch invalidated original account")
+	if users != 2 || sessions != 2 {
+		t.Fatalf("switch must reuse the member identity: %d/%d", users, sessions)
 	}
 }
 
@@ -227,6 +219,64 @@ func TestCloooudRejectsInvalidLoginWithoutSession(t *testing.T) {
 			var count int64
 			if err := db.Model(&model.AuthSession{}).Count(&count).Error; err != nil || count != 0 {
 				t.Fatalf("invalid callback issued session: %d %v", count, err)
+			}
+		})
+	}
+}
+
+func TestCloooudFailedSwitchPreservesOriginalSession(t *testing.T) {
+	for _, scenario := range []string{"upstream", "disabled", "session-creation", "logout"} {
+		t.Run(scenario, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if scenario == "upstream" {
+					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"code": 1, "data": cloooudProfile{Issuer: "https://identity.example", SiteID: 1, MemberID: 42}})
+			}))
+			defer server.Close()
+			configureCloooudTest(t, server.URL)
+			svc, db := newCloooudTestService(t)
+			if err := db.Create(&model.User{ID: "admin", Username: "admin", Role: model.UserRoleAdmin, Status: model.UserStatusActive}).Error; err != nil {
+				t.Fatal(err)
+			}
+			original, err := svc.completeNativeLogin("admin")
+			if err != nil {
+				t.Fatal(err)
+			}
+			member, err := svc.cloooudUser(cloooudConfig{AutoRegister: true}, cloooudProfile{Issuer: "https://identity.example", SiteID: 1, MemberID: 42})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if scenario == "disabled" {
+				db.Model(member).Update("status", model.UserStatusDisabled)
+			}
+			if scenario == "session-creation" {
+				svc.auth.CreateSession = func(*model.User) (*auth.AuthSessionResult, error) { return nil, errors.New("unavailable") }
+			}
+			if scenario == "logout" {
+				logout := svc.auth.Logout
+				svc.auth.Logout = func(cookie string) error {
+					if cookie == original.Session {
+						return errors.New("logout unavailable")
+					}
+					return logout(cookie)
+				}
+			}
+			start, err := svc.BeginCloooudLogin("/canvas")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := svc.CompleteCloooudLogin(context.Background(), start.BrowserState, strings.Repeat("c", 64), start.BrowserState, original.Session); err == nil {
+				t.Fatal("failed switch succeeded")
+			}
+			if user, err := svc.auth.CurrentUser(original.Session); err != nil || user.ID != "admin" {
+				t.Fatal("failed switch removed original session")
+			}
+			var sessions int64
+			db.Model(&model.AuthSession{}).Count(&sessions)
+			if sessions != 1 {
+				t.Fatalf("failed switch leaked a new session: %d", sessions)
 			}
 		})
 	}
@@ -353,6 +403,7 @@ func newCloooudTestService(t *testing.T) (*Service, *gorm.DB) {
 	native := auth.New(repo, nil, nil)
 	return New(db, NativeHost{
 		CurrentUser:       native.CurrentUser,
+		Logout:            native.Logout,
 		CreateSession:     native.SessionIssuer(),
 		EnsureSignupBonus: func(string) error { return nil },
 		RecordActivity:    func(string, string, int) {},

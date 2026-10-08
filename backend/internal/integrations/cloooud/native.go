@@ -11,7 +11,10 @@ import (
 
 // NativeHost 由宿主注入能力；模块不复制原生会话生成算法。
 type NativeHost struct {
-	CurrentUser       func(string) (*model.User, error)
+	// CurrentUser 校验旧 Cookie 的真实身份；校验通过后才允许按该 Cookie 注销会话。
+	CurrentUser func(string) (*model.User, error)
+	// Logout 复用宿主单会话注销：换号时退出旧会话，失败回滚时清理刚创建的新会话。
+	Logout            func(string) error
 	CreateSession     func(*model.User) (*auth.AuthSessionResult, error)
 	EnsureSignupBonus func(string) error
 	RecordActivity    func(string, string, int)

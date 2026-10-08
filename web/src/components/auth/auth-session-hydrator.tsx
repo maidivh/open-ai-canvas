@@ -6,9 +6,24 @@ import { FullScreenLoader } from "@/components/ui/aceternity/full-screen-loader"
 import { preloadWorkspaceRoute } from "@/lib/workspace-route-modules";
 import { useUserStore } from "@/stores/use-user-store";
 import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
+import { ACTIVE_USER_SCOPE_KEY, getActiveUserScope } from "@/lib/user-scope";
 
 export function AuthSessionHydrator({ children }: { children: ReactNode }) {
     const hydrated = useUserStore((state) => state.hydrated);
+
+    useEffect(() => {
+        // [小洞免登定制] 在上游会话恢复组件补跨标签换号监听，Cookie 变化后重建整页工作区。
+        // 返回项目/画布入口而非保留旧作品详情地址，避免用新账号打开旧账号的编辑状态。
+        // 重载前的请求仍由页面账号头拦截；本地延迟保存仍由 user-scope.ts 固定到旧账号。
+        const onAccountChanged = (event: StorageEvent) => {
+            if (event.storageArea !== window.localStorage || (event.key !== ACTIVE_USER_SCOPE_KEY && event.key !== null)) return;
+            if (event.key !== null && event.newValue === getActiveUserScope()) return;
+            const target = window.location.pathname.startsWith("/projects") ? "/projects" : "/canvas";
+            window.location.replace(target);
+        };
+        window.addEventListener("storage", onAccountChanged);
+        return () => window.removeEventListener("storage", onAccountChanged);
+    }, []);
 
     useEffect(() => {
         let cancelled = false;

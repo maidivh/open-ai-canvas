@@ -17,6 +17,12 @@ description: 信封、错误码与 OpenAPI
 
 完成上传时以数据库事务提交容量并消费预留，使用既有资源幂等标识。失败释放预留；跨 UTC 日期完成需要通过当天日额度检查。请求与响应字段不变。
 
+## 小洞免登后的页面账号校验
+
+`GET /api/auth/cloooud/callback` 验证成功后自动切换为本次小洞身份对应的影策账号，并注销本浏览器原会话。失败保留原登录。
+
+免登会话同时设置 HttpOnly 的 `open_ai_canvas_account_scope` 标记。受认证保护的写请求（包括生成、保存、上传和退出）必须携带 `X-Canvas-User-ID`，值为该页面加载的用户 ID；缺失或与 Cookie 身份不符时返回 HTTP 409，提示刷新页面。该头仅用于防止共享 Cookie 换号后的页面串用，不能替代会话认证和资源权限检查。有账号头的读请求同样校验一致性；`GET /api/auth/session` 为恢复页面会话的例外，无自定义头的媒体 GET 仍按 Cookie 和资源权限读取。前端账号头来自标签页内存，不从其他标签可修改的共享存储实时读取。
+
 ## AutoDL 视频画面规格配置
 
 渠道模型的 `capabilityConfig.video.resolutions` 与 `defaultResolution` 直接表示所选完整分辨率与默认值，始终生效；不再使用或返回 `customSizeEnabled`、`customScreenSpec`。AutoDL v2.3.0 未声明独立比例参数，因此 `ratios` 为空、`defaultRatio` 为空字符串，横竖与方形由完整分辨率标签表达。

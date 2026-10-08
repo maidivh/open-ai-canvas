@@ -165,6 +165,14 @@ func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 	})
 	r.GET("/auth/linuxdo/callback", linuxDOCallbackHandler(svc))
 	r.POST("/auth/logout", func(c *gin.Context) {
+		// [小洞免登定制] 浏览器 Cookie 跨标签共享，旧页面点退出也可能注销刚切换的新账号。
+		// 免登标记存在时先校验页面账号；不匹配就拒绝，不能删除会话或清除共享 Cookie。
+		if guard, _ := c.Cookie(cloooud.AccountScopeCookie); guard != "" {
+			if _, err := currentUser(c, svc); err != nil {
+				failService(c, err)
+				return
+			}
+		}
 		_ = svc.Logout(sessionCookie(c))
 		clearSessionCookie(c)
 		ok(c, gin.H{"ok": true})
@@ -580,7 +588,16 @@ func readPayloadModel(body []byte) string {
 }
 
 func currentUser(c *gin.Context, svc *service.Service) (*model.User, error) {
-	return svc.CurrentUser(sessionCookie(c))
+	user, err := svc.CurrentUser(sessionCookie(c))
+	if err != nil {
+		return nil, err
+	}
+	// [小洞免登定制] 在上游统一鉴权入口增加页面账号校验，覆盖保存、上传、生成等业务。
+	// Cookie 决定真实身份；账号头只拦截旧标签串用新 Cookie，不授予任何权限。
+	if err := validateAccountScope(c, user.ID); err != nil {
+		return nil, err
+	}
+	return user, nil
 }
 
 func sessionCookie(c *gin.Context) string {
@@ -595,6 +612,9 @@ func passwordResetRateLimitSubject(value string) string {
 
 func setSessionCookie(c *gin.Context, value string, maxAge int) {
 	secure := c.Request.TLS != nil || strings.EqualFold(strings.TrimSpace(c.GetHeader("X-Forwarded-Proto")), "https")
+	// [小洞免登定制] 原生登录先移除旧免登标记，避免把上次的写请求约束带入普通登录。
+	// 小洞回调也复用此函数，但会在设置会话后重新写入标记；顺序见 integrations/cloooud/http.go。
+	clearAccountScopeCookie(c, secure)
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     service.SessionCookieName,
 		Value:    value,
@@ -608,6 +628,8 @@ func setSessionCookie(c *gin.Context, value string, maxAge int) {
 
 func clearSessionCookie(c *gin.Context) {
 	secure := c.Request.TLS != nil || strings.EqualFold(strings.TrimSpace(c.GetHeader("X-Forwarded-Proto")), "https")
+	// [小洞免登定制] 退出时同步清除附属标记，使其生命周期与浏览器会话一致。
+	clearAccountScopeCookie(c, secure)
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     service.SessionCookieName,
 		Value:    "",

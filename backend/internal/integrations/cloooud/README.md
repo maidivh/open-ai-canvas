@@ -46,12 +46,12 @@ bash .local/start-backend.sh
 
 以下步骤用于已有影策 Docker 部署和已有小洞站点。真实域名与站点编号尚未提供，示例不能原样用于生产。
 
-1. **更新程序。** 将本次小洞 PHP 后端、Vue 前端及影策后端代码发布到对应项目。影策先用原有登录方式创建好管理员账号。
+1. **更新程序。** 将本次小洞 PHP 后端、Vue 前端及影策前后端代码发布到对应项目。影策前端的页面账号校验与后端自动切换必须配套发布；影策先用原有登录方式创建好管理员账号。
 2. **给小洞新增一张表。** 备份小洞数据库，打开 `ai_cloooud/niucloud/addon/ht_hot/sql/canvas_sso.sql`，把 `{{prefix}}` 替换为当前数据库表前缀，然后只执行这个 SQL 文件。不要执行整个历史 `sql.txt`。
 3. **生成一次密钥。** 执行 `openssl rand -hex 32`，将输出保存好。下一步的两个 `.env` 使用完全相同的密钥。
 4. **填写两个配置文件。** 小洞后端填写 `ai_cloooud/niucloud/.env` 的 `[CANVAS_SSO]` 段；影策填写 `open-ai-canvas/.env`。具体内容见下面两段配置。将示例域名和站点编号改成自己的值，将密钥填到两边；准备启用时，小洞 `ENABLED` 和影策 `CANVAS_CLOOOUD_SSO_ENABLED` 都设为 `true`，允许首次自动建号时影策 `CANVAS_CLOOOUD_SSO_AUTO_REGISTER` 也设为 `true`。
-5. **让配置生效。** 小洞按原部署方式重新加载 PHP 服务；影策在项目根目录按下方 Docker 命令构建并更新后端。无需再手工修改 Compose 文件，也不需要增加启动脚本。小洞前端不填写密钥。
-6. **检查结果。** 用没有登录影策的浏览器，先登录小洞，点击左侧「画布/短剧」。预期新标签页直接进入影策创作页；退出影策后再次从小洞进入，仍是同一个账号。若提示影策存在原账号，先关闭其他影策标签页并退出原登录，再进入。
+5. **让配置生效。** 小洞按原部署方式重新加载 PHP 服务；影策在项目根目录按下方 Docker 命令构建并更新前后端。无需再手工修改 Compose 文件，也不需要增加启动脚本。小洞前端不填写密钥。
+6. **检查结果。** 先登录小洞，点击左侧「短剧制作/无限画布」，应分别进入影策项目页或画布页。影策已有其他账号时自动切换为当前小洞身份对应的影策账号，无需手动退出；其他新版影策标签页会重新加载入口。退出影策后再次从小洞进入，仍复用同一账号。
 
 未执行上述部署和配置前，新增菜单可能显示“未启用”；这不等于已经完成真实环境免登。
 
@@ -68,7 +68,9 @@ bash .local/start-backend.sh
 
 启用前必须先完成影策本地管理员初始化。不要将小洞管理员当作影策管理员；现有本地登录仍可使用。不要随意修改 issuer 或 site_id，否则会被识别为不同身份来源。本期没有历史账号绑定或合并界面。
 
-影策已有同一身份的会话时允许重复免登；存在其他账号或无法验证的旧 Cookie 时拒绝替换，不创建新账号或签发新会话，并保留明确的 HTTP 403 提示。切换账号前，先关闭其他影策标签页，在剩余页面退出原登录，再从小洞重新进入；这避免旧画布内存与新账号 Cookie 混用。也可使用独立浏览器资料隔离不同账号。
+影策以本次验证成功的小洞身份为准：同一身份复用用户，不同身份自动切换，失效 Cookie 可被新会话覆盖。只有新身份校验和新会话创建成功后才注销本浏览器原会话，其他设备的会话不变；失败保留原登录并明确提示，不会把旧账号页面当作免登成功。
+
+免登设置 HttpOnly 的 `open_ai_canvas_account_scope` 标记。业务写请求必须用 `X-Canvas-User-ID` 携带当前页面加载的账号 ID，与 Cookie 认证出的账号不符或缺少标识时返回 HTTP 409；账号标识不承担认证功能。`GET /api/auth/session` 用于新页面发现当前身份，普通媒体 GET 不要求自定义头。前端固定每个标签页的缓存账号归属，账号变化后重载到项目/画布入口，避免旧画布内容进入新账号。发布前已经打开的旧版页面无法自动刷新，但其无账号标识的写请求会被阻止，刷新后恢复；未保存的临时编辑不会迁移到新账号。
 
 两端退出登录分别生效，本期不包含统一退出。小洞在签发和兑换时重新校验会员、站点状态；已经签发的影策会话不持续查询小洞状态，因此小洞禁用会员不会立即注销已有影策会话。需要立即停用时，还需在影策禁用对应账号。
 
@@ -134,11 +136,11 @@ SSO 配置填写在影策项目根 `.env`，即与 `docker-compose.deploy.yml` �
 首次部署这份定制代码，在影策项目根目录执行以下两条命令。要求已有 PostgreSQL、Redis 正常运行，原部署 `.env` 完整；命令不会启动依赖服务或执行迁移服务：
 
 ```sh
-docker compose -f docker-compose.deploy.yml -f docker-compose.build.yml build backend
-docker compose -f docker-compose.deploy.yml -f docker-compose.build.yml up -d --no-deps --force-recreate backend
+docker compose -f docker-compose.deploy.yml -f docker-compose.build.yml build backend web
+docker compose -f docker-compose.deploy.yml -f docker-compose.build.yml up -d --no-deps --force-recreate backend web
 ```
 
-第一条把本地修改编译进后端镜像；第二条用新镜像和 `.env` 重新创建后端容器。之后只改 `.env` 时执行第二条即可，单独 `restart` 不会更新容器环境变量。官方未包含此修改的预编译镜像不能直接使用本功能。
+第一条把本地修改编译进前后端镜像；第二条用新镜像和 `.env` 重新创建对应容器。之后只改后端 `.env` 时，仅重新创建 backend 即可，单独 `restart` 不会更新容器环境变量。官方未包含此修改的预编译镜像不能直接使用本功能。
 
 以上配置接入针对 `docker-compose.deploy.yml`，不能直接套用到其他 Compose 文件或宿主机 `go run`。此处是发布说明，本次没有执行镜像构建、容器更新或真实环境启用。
 
@@ -160,7 +162,7 @@ SSO 响应禁止缓存并设置 `Referrer-Policy: no-referrer`。影策应用访
 
 ## 验证与启用顺序
 
-先部署 PHP 新增表与接口、小洞前端菜单和授权页、影策后端，再对齐配置并显式启用。恢复 `ENABLED=false` 可停止新的 SSO 登录；不要删除已有账号、身份映射或账务记录。关闭 SSO 不会注销已经签发的本地会话。
+先部署 PHP 新增表与接口、小洞前端菜单和授权页、影策前后端，再对齐配置并显式启用。恢复 `ENABLED=false` 可停止新的 SSO 登录；不要删除已有账号、身份映射或账务记录。关闭 SSO 不会注销已经签发的本地会话。
 
 代码测试使用临时 SQLite、模拟身份端点和前端请求 mock；未连接真实小洞账号或业务数据库。PHP 与 Vue 的测试命令分别见 [PHP 后端接入](php.md)和[前端入口与授权页](frontend.md)。影策可在 `backend/` 执行：
 
@@ -175,7 +177,7 @@ go test -p 1 ./internal/integrations/cloooud ./internal/auth ./internal/handler 
 上线前仍需在目标环境验收：
 
 - 小洞已登录、未登录后回跳、Token 过期、请求中切换账号；授权页失败后重新发起。
-- 影策首次普通用户创建、重复登录复用、其他已登录账号拒绝切换、用户缓存隔离、两端原有登录仍可用。
+- 影策首次普通用户创建、重复登录复用、其他已登录账号自动切换、旧标签请求和缓存隔离、两端原有登录仍可用。
 - state 不匹配、授权码到期/重放、错误租户/issuer/client/回调/PKCE、停用会员和影策账号；MySQL 并发兑换只有一次成功。
 - 跨站 Cookie、HTTPS 代理、子路径路由、浏览器与代理日志、后台权限；两端充值和消费仍各自记账。
 
@@ -196,17 +198,23 @@ go test -p 1 ./internal/integrations/cloooud ./internal/auth ./internal/handler 
 
 主体文件位于本目录：`sso.go`、`config.go`、`exchange.go`、`http.go`、`native.go`、`metadata.go`、`openapi.yaml`；专项验证为四个 `*_test.go` 和 `deploy_test.py`。`native.go` 集中维护原生登录能力的调用顺序和登录时间条件更新，不复制原生会话生成算法。
 
-下面列出独立包之外全部 7 个已有文件的接入点，路径相对于影策仓库根目录。外部不再新增文件，SSO 业务流程和数据库更新均留在模块中。
+下面列出独立包之外的上游文件接入点，路径相对于影策仓库根目录。身份兑换和会话切换保留在本模块，跨标签保护接入原有 HTTP 鉴权与前端账号作用域。自动切换相关的定制代码统一用 `[小洞免登定制]` 注释说明用途和依赖；可在仓库根目录执行 `rg -n '\[小洞免登定制\]' backend web/src` 定位，合并上游时不要只保留登录回调而遗漏这些保护。
 
 | 职责 | 当前文件 |
 | --- | --- |
-| 启动装配与日志 | `backend/cmd/server/main.go`：统一注册模块路由，将数据库和宿主能力传入模块，并调用模块日志脱敏函数 |
-| 宿主 HTTP 能力 | `backend/internal/handler/auth.go`：短函数返回原有错误信封、限流、Cookie 函数 |
+| 启动装配、日志与 CORS | `backend/cmd/server/main.go`：注册模块路由、注入数据库和宿主能力、日志脱敏；CORS 允许 `X-Canvas-User-ID`，否则跨域页面无法发送账号校验头 |
+| 宿主 HTTP 能力与鉴权 | `backend/internal/handler/auth.go`：提供错误信封、限流和 Cookie 函数；在 `currentUser` 校验页面账号，在退出前拦截旧标签，在原生登录/退出时清除免登附属标记 |
 | 原生会话能力 | `backend/internal/auth/auth.go`：短函数返回原有会话生成方法，由模块先完成身份和状态校验后调用 |
-| 宿主业务能力 | `backend/internal/app/auth_bridge.go`：短函数返回当前用户校验、会话生成、本地新用户政策和活动记录能力 |
+| 宿主业务能力 | `backend/internal/app/auth_bridge.go`：提供当前用户校验、会话生成、单会话注销、新用户政策和活动记录能力；注销用于换号成功后退出旧会话及失败回滚新会话 |
 | 运行时 OpenAPI | `backend/internal/handler/api.go`：调用模块合并规范；原 `handler/openapi.yaml` 保持上游内容 |
 | Docker 配置传递 | `docker-compose.deploy.yml`：后端 environment 集中增加 9 行 |
 | 文档入口 | `docs/index.md`：仅一行链接 |
+| 页面缓存账号归属 | `web/src/lib/user-scope.ts`：原来每次读取共享账号，现改为标签页持有账号；其他标签换号不能让旧草稿进入新账号缓存，并统一生成页面账号头 |
+| 普通 API 请求 | `web/src/services/api/request.ts`：在原有 Axios 实例拦截器附加页面账号头，让后端发现旧页面和新 Cookie 不一致 |
+| 模型生成请求 | `web/src/services/api/custom-channel-relay.ts`：模型通道使用独立 axios/fetch，须单独补账号头，覆盖系统与自定义渠道的生成请求 |
+| 跨标签会话恢复 | `web/src/components/auth/auth-session-hydrator.tsx`：监听共享账号变化并重载项目/画布入口，丢弃旧账号页面内存，不把新身份直接套入旧编辑器 |
+
+新增的宿主补充文件 `backend/internal/handler/account_scope.go` 负责比较页面账号与真实 Cookie 身份；它被 `auth.go` 调用，不能只复制本免登目录而漏掉。`account_scope_test.go` 覆盖旧标签、缺少账号头、会话恢复和媒体读取的边界；`web/test/user-scope-tabs.test.ts` 验证缓存归属与真实 Axios 请求绑定。协议和人工验收项分别维护在 `docs/content/docs/backend/http-api.mdx` 与 `docs/content/docs/progress/pending-test.mdx`。
 
 先前新增的 `app/cloooud_bridge.go`、`auth/external_login.go`、`handler/cloooud.go`、`repository/external_login.go`、`service/aliases_cloooud.go` 已全部移除。原 `repository/oauth.go`、`handler/openapi.yaml` 和 `cmd/server/main_test.go` 保持上游内容。Go 集成不修改通用认证响应来展示小洞身份来源，外部身份映射仍保存在原有身份表中。模块通过注入的函数继续使用原生 Cookie、限流和会话策略。
 

@@ -1,4 +1,5 @@
 import axios, { type AxiosRequestConfig, type AxiosResponse } from "axios";
+import { userScopeHeaders } from "@/lib/user-scope";
 
 export type ApiParams = Record<string, string | string[] | number | number[] | undefined>;
 
@@ -40,6 +41,12 @@ export class ApiError extends Error {
 // 所有后端 JSON 请求共用同一实例，避免认证、Base URL 和错误语义在模块间漂移。
 export const apiBaseURL = import.meta.env.VITE_CANVAS_BACKEND_URL || "/api";
 export const apiClient = axios.create({ baseURL: apiBaseURL, withCredentials: true });
+// [小洞免登定制] 在上游统一请求入口绑定本标签已加载的账号，避免自动换号后的 Cookie 被旧页面借用。
+// 后端 handler/account_scope.go 比较此头与 Cookie 身份；不要改为实时读取共享 localStorage 的账号。
+apiClient.interceptors.request.use((config) => {
+    for (const [name, value] of Object.entries(userScopeHeaders())) config.headers.set(name, value);
+    return config;
+});
 
 /**
  * 解包后端业务信封的唯一边界。这里把非零业务 code 转成 ApiError，保留 reason、重试语义和 Retry-After；
