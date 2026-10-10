@@ -4,8 +4,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"infinite-canvas/backend/internal/integrations/cloooud"
-	"infinite-canvas/backend/internal/kernel"
+	"yingce/backend/internal/integrations/cloooud"
+	"yingce/backend/internal/kernel"
 )
 
 // [小洞免登定制] 此文件是上游 HTTP 鉴权的补充，由 auth.go 的 currentUser 统一调用。

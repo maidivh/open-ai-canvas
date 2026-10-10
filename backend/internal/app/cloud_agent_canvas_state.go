@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"infinite-canvas/backend/internal/canvas/capability"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/assets"
+	"yingce/backend/internal/canvas/capability"
+	"yingce/backend/internal/repository"
 )
 
 type cloudAgentStructuredProjector func(value any, offset int, precise bool) (any, error)
@@ -452,6 +453,16 @@ func cloudAgentProjectNodeFields(node, meta map[string]any, descriptor capabilit
 		}
 		if !ok || (key == "content" && descriptor.GenerationMode != "") {
 			continue
+		}
+		// Some older uploads persist only a resource URL in the text node. Do not
+		// expose that locator as if it were the novel/script正文; the model must
+		// call canvas_read_text, which authorizes and reads the owned resource.
+		if key == "content" {
+			if text, isString := value.(string); isString && assets.ResourceID(text) != "" {
+				projected["contentAvailable"] = true
+				projected["contentSource"] = "resource"
+				continue
+			}
 		}
 		if safe, truncated := cloudAgentSafeProjection(value, textLimit); safe != nil {
 			projected[key] = safe

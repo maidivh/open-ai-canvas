@@ -4,9 +4,9 @@ import (
 	"time"
 
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/auth"
-	"infinite-canvas/backend/internal/kernel"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/auth"
+	"yingce/backend/internal/kernel"
+	"yingce/backend/internal/model"
 )
 
 // NativeHost 由宿主注入能力；模块不复制原生会话生成算法。

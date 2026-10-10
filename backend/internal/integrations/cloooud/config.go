@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"infinite-canvas/backend/internal/kernel"
+	"yingce/backend/internal/kernel"
 )
 
 type cloooudConfig struct {

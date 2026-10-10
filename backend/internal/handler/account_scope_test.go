@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"infinite-canvas/backend/internal/integrations/cloooud"
+	"yingce/backend/internal/integrations/cloooud"
 )
 
 func TestAccountScopeStopsStaleTabWrites(t *testing.T) {

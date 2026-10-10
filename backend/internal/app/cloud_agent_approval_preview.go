@@ -4,15 +4,16 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"unicode/utf8"
 
-	"infinite-canvas/backend/internal/canvas/capability"
-	"infinite-canvas/backend/internal/canvas/layout"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/canvas/capability"
+	"yingce/backend/internal/canvas/layout"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 // cloudAgentApprovalPreview is server-authored explanatory data. It never
@@ -166,6 +167,11 @@ func applyCloudAgentCanvasPlan(doc map[string]any, ops []agentCanvasOp) ([]cloud
 				return nil, cloudAgentFieldError(fmt.Sprintf("ops[%d].toNodeId", opIndex), "invalid_value", "连线不能指向自身；请选择另一个目标节点")
 			}
 			if err := validateCloudAgentConnectionWithHandles(nodes, op.FromNodeID, op.ToNodeID, op.FromHandleID, op.ToHandleID, edges); err != nil {
+				// 保留端点校验指出的具体字段，让模型只修正错误 handle，而不是放弃镜头绑定。
+				var fieldErr *cloudAgentFieldArgumentError
+				if errors.As(err, &fieldErr) {
+					return nil, cloudAgentFieldError(fmt.Sprintf("ops[%d].%s", opIndex, fieldErr.Field), fieldErr.Issue, cloudAgentSafeToolError(err))
+				}
 				return nil, cloudAgentFieldError(fmt.Sprintf("ops[%d]", opIndex), "invalid_connection", cloudAgentSafeToolError(err))
 			}
 			for _, edge := range edges {

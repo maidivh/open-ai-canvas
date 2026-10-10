@@ -15,9 +15,9 @@ import (
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/auth"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
+	"yingce/backend/internal/auth"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
 )
 
 func configureCloooudTest(t *testing.T, endpoint string) {

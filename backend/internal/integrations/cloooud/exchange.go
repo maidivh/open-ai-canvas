@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"infinite-canvas/backend/internal/kernel"
-	"infinite-canvas/backend/internal/outbound"
+	"yingce/backend/internal/kernel"
+	"yingce/backend/internal/outbound"
 )
 
 func exchangeCloooudCode(ctx context.Context, cfg cloooudConfig, code, verifier string) (cloooudProfile, error) {

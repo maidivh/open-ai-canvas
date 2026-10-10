@@ -1,7 +1,8 @@
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { Check, ChevronDown, Coins } from "lucide-react";
 import { Popover } from "antd";
 
+import { imageQualityLabel } from "@/lib/image-quality";
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { modelCapabilityConfigFor, videoDurationOptions } from "@/lib/model-capabilities";
 import { formatPriceRange, modelQuoteDescription, modelQuoteRequest, normalizeTierResolution, priceTierSummaryLabel, priceTiersForCurrentSelection } from "@/lib/model-pricing";
@@ -30,6 +31,7 @@ type ModelPickerProps = {
     variant?: "default" | "creation";
     requirements?: ModelRequirements;
     showConfiguredModelName?: boolean;
+    modelFilter?: (model: string) => boolean;
 };
 
 export function ModelPicker({
@@ -47,6 +49,7 @@ export function ModelPicker({
     variant = "creation",
     requirements,
     showConfiguredModelName = false,
+    modelFilter,
 }: ModelPickerProps) {
     const creditsEnabled = useUserStore((state) => state.features.creditsEnabled);
     const pickerId = useId();
@@ -54,10 +57,11 @@ export function ModelPicker({
     const rawTheme = useActiveTheme();
     const theme = (canvasThemes[rawTheme as keyof typeof canvasThemes] ?? canvasThemes.dark) as CanvasTheme;
     const [open, setOpen] = useState(false);
+    const [availableHeight, setAvailableHeight] = useState(0);
     const [activeGroupKey, setActiveGroupKey] = useState<string | null>(null);
     const menuRef = useRef<HTMLDivElement>(null);
     const triggerRef = useRef<HTMLButtonElement>(null);
-    const options = useMemo(() => Array.from(new Set(selectableModelsByCapability(config, capability).filter(Boolean))), [capability, config]);
+    const options = useMemo(() => Array.from(new Set(selectableModelsByCapability(config, capability).filter((model) => Boolean(model) && (!modelFilter || modelFilter(model))))), [capability, config, modelFilter]);
     const optionGroups = useMemo(() => groupModelsForPicker(config, options), [config, options]);
     const storedCurrent = value?.trim() || "";
     // 参数档位会在选中模型后由调用方归一到其能力配置，不能因为旧模型留下的参数而禁止切换。
@@ -69,6 +73,21 @@ export function ModelPicker({
     const quoteRequest = useMemo(() => modelQuoteRequest(config, current, capability, requirements), [capability, config, current, requirements]);
     const [routeQuote, setRouteQuote] = useState<LogicalModelQuote | undefined>();
     const creationVariant = variant === "creation";
+
+    useLayoutEffect(() => {
+        if (!open) return;
+        const updateAvailableHeight = () => {
+            const { top, bottom } = triggerRef.current!.getBoundingClientRect();
+            setAvailableHeight(Math.max(top, window.innerHeight - bottom));
+        };
+        updateAvailableHeight();
+        window.addEventListener("resize", updateAvailableHeight);
+        window.addEventListener("scroll", updateAvailableHeight, true);
+        return () => {
+            window.removeEventListener("resize", updateAvailableHeight);
+            window.removeEventListener("scroll", updateAvailableHeight, true);
+        };
+    }, [open]);
 
     useEffect(() => {
         if (!showSelectedPrice || !creditsEnabled || !quoteRequest) {
@@ -156,7 +175,7 @@ export function ModelPicker({
                 "canvas-model-picker-menu creation-model-picker-menu max-w-[calc(100vw-24px)]",
                 activeGroupKey === null ? "is-brand-list" : "is-model-list",
             )}
-            style={{ background: theme.node.panel, color: theme.node.text }}
+            style={{ background: theme.node.panel, color: theme.node.text, "--canvas-model-picker-available-height": `${availableHeight}px` } as CSSProperties}
             role="listbox"
             aria-label={placeholder}
             onKeyDown={handleMenuKeyDown}
@@ -185,7 +204,7 @@ export function ModelPicker({
                             </button>;
                         })}
                     </div>
-                    {optionGroups.filter((group) => group.key === activeGroupKey).map((group) => <section key={group.key} className="canvas-model-picker-group canvas-model-picker-model-pane min-w-0 overflow-hidden">
+                    {optionGroups.filter((group) => group.key === activeGroupKey).map((group) => <section key={group.key} className="canvas-model-picker-group canvas-model-picker-model-pane min-w-0">
                         <div className="grid min-w-0 gap-1">
                             {group.models.map((modelGroup) => {
                                 const selected = modelGroup.models.includes(current);
@@ -243,6 +262,7 @@ export function ModelPicker({
                 onOpenChange={setPickerOpen}
                 trigger="click"
                 placement="bottomLeft"
+                align={{ overflow: { adjustY: true, shiftX: true } }}
                 arrow={false}
                 content={content}
                 classNames={{
@@ -468,7 +488,8 @@ function tierSpecificationLabel(tier: NonNullable<NonNullable<AiConfig["channels
     const operation = selector.operation && selector.operation !== "*" ? operationLabels[selector.operation] || selector.operation : "";
     const details = [
         operation,
-        selector.quality && selector.quality !== "*" ? selector.quality.toUpperCase() : "",
+        selector.quality && selector.quality !== "*" ? imageQualityLabel(selector.quality) : "",
+        selector.resolution && selector.resolution !== "*" ? imageQualityLabel(selector.resolution) : "",
         selector.size && selector.size !== "*" ? selector.size : "",
         tier.resolution !== "*" ? tierResolutionLabel(tier.resolution) : "",
         tier.videoSeconds ? tierDurationLabel(tier.videoSeconds) : "",

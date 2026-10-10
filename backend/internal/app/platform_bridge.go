@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"time"
 
-	"infinite-canvas/backend/internal/kernel"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/platform"
+	"yingce/backend/internal/kernel"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/platform"
 )
 
 type (
@@ -30,6 +30,7 @@ const (
 	FeatureFrontendModels        = platform.FeatureFrontendModels
 	FeaturePluginCenter          = platform.FeaturePluginCenter
 	FeatureSystemPlugins         = platform.FeatureSystemPlugins
+	FeatureInspirationSources    = platform.FeatureInspirationSources
 	FeatureTimelineTranscription = platform.FeatureTimelineTranscription
 )
 

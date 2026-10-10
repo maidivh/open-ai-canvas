@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"infinite-canvas/backend/internal/agentcontext"
-	"infinite-canvas/backend/internal/model"
+	"yingce/backend/internal/agentcontext"
+	"yingce/backend/internal/model"
 )
 
 // A deterministic checkpoint failure must not be retried forever like a transient DB error.
@@ -152,6 +152,7 @@ type cloudAgentRuntime struct {
 	DecisionPreparedHashes         map[string]string                       `json:"decisionPreparedHashes,omitempty"`
 	ActionNudged                   bool                                    `json:"actionNudged,omitempty"`
 	EmptyOutputNudged              int                                     `json:"emptyOutputNudged,omitempty"`
+	InvalidArgumentSteps           int                                     `json:"invalidArgumentSteps,omitempty"`
 	StepSnapshotHash               string                                  `json:"stepSnapshotHash,omitempty"`
 	StoryboardTaskID               string                                  `json:"storyboardTaskId,omitempty"`
 	Plan                           []cloudAgentPlanItem                    `json:"plan,omitempty"`

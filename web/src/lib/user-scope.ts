@@ -1,5 +1,5 @@
 // [小洞免登定制] 导出原有存储键，供 AuthSessionHydrator 监听其他标签页发布的账号切换。
-export const ACTIVE_USER_SCOPE_KEY = "infinite-canvas:active-user-scope";
+export const ACTIVE_USER_SCOPE_KEY = "yingce:active-user-scope";
 const GUEST_SCOPE = "guest";
 // [小洞免登定制] 将上游「每次读取共享账号」改为「本标签持有账号」。
 // 其他标签改 localStorage 时，旧内存和延迟保存仍归属旧账号，直到本标签明确切换或重载。

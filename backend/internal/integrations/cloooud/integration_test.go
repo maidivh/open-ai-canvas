@@ -13,11 +13,11 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
-	"infinite-canvas/backend/internal/handler"
-	"infinite-canvas/backend/internal/integrations/cloooud"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/repository"
-	"infinite-canvas/backend/internal/service"
+	"yingce/backend/internal/handler"
+	"yingce/backend/internal/integrations/cloooud"
+	"yingce/backend/internal/model"
+	"yingce/backend/internal/repository"
+	"yingce/backend/internal/service"
 )
 
 // 覆盖真实 handler → app → 独立模块 → 原生 auth 的接入链，不连接业务数据库。

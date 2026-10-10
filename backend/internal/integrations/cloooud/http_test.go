@@ -7,11 +7,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
-	nativeauth "infinite-canvas/backend/internal/auth"
-	"infinite-canvas/backend/internal/kernel"
-	"time"
+	nativeauth "yingce/backend/internal/auth"
+	"yingce/backend/internal/kernel"
 )
 
 type cloooudTestAuthenticator struct {
