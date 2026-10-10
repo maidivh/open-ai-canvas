@@ -1,15 +1,29 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { ACTIVE_USER_SCOPE_KEY, getActiveUserScope, scopedLocalStorage, setActiveUserScope } from "../src/lib/user-scope";
 import { apiClient } from "../src/services/api/request";
 
-const previousWindow = globalThis.window;
 const values = new Map<string, string>();
-globalThis.window = { localStorage: {
-    getItem: (key: string) => values.get(key) ?? null,
-    setItem: (key: string, value: string) => { values.set(key, value); },
-    removeItem: (key: string) => { values.delete(key); },
-} } as unknown as Window & typeof globalThis;
-afterAll(() => { globalThis.window = previousWindow; });
+let previousWindow: PropertyDescriptor | undefined;
+let previousScope: string;
+beforeEach(() => {
+    previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+    previousScope = getActiveUserScope();
+    values.clear();
+    Object.defineProperty(globalThis, "window", {
+        configurable: true,
+        value: { localStorage: {
+            getItem: (key: string) => values.get(key) ?? null,
+            setItem: (key: string, value: string) => { values.set(key, value); },
+            removeItem: (key: string) => { values.delete(key); },
+        } },
+    });
+    setActiveUserScope(null);
+});
+afterEach(() => {
+    setActiveUserScope(previousScope);
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+});
 
 test("another tab switching accounts cannot redirect old in-memory data into the new user's storage", () => {
     setActiveUserScope("old-user");

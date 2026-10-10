@@ -21,9 +21,10 @@ class DeploymentEnvironmentTest(unittest.TestCase):
         required = {
             "POSTGRES_PASSWORD": "test-only-password", "DATABASE_URL": "postgresql://test:test@postgres/test",
             "CANVAS_BACKEND_IMAGE": "example/backend:test", "CANVAS_WEB_IMAGE": "example/web:test",
+            "CANVAS_IMAGE_TAG": "test", "YINGCE_AGENT_TOKEN": "test-only-agent-token",
         }
         process_env = {key: value for key, value in os.environ.items()
-                       if not key.startswith(("CANVAS_", "COMPOSE_", "POSTGRES_")) and key != "DATABASE_URL"}
+                       if not key.startswith(("CANVAS_", "COMPOSE_", "POSTGRES_", "YINGCE_")) and key != "DATABASE_URL"}
         with tempfile.TemporaryDirectory(prefix="canvas-sso-compose-") as directory:
             env_file = Path(directory) / ".env"
             for enabled in (True, False):
@@ -44,7 +45,7 @@ class DeploymentEnvironmentTest(unittest.TestCase):
                 else:
                     self.assertEqual(str(backend.get("CANVAS_CLOOOUD_SSO_ENABLED")), "false")
                     self.assertEqual(str(backend.get("CANVAS_CLOOOUD_SSO_AUTO_REGISTER")), "false")
-                for name in ("web", "migrate", "postgres", "redis"):
+                for name in ("web", "migrate", "postgres", "redis", "yingce-agent"):
                     self.assertNotIn("CANVAS_CLOOOUD_SSO_CLIENT_SECRET", services[name].get("environment", {}))
 
 

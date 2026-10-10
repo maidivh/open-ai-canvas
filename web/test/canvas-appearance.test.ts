@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { DEFAULT_CANVAS_COLOR_THEME } from "../src/lib/canvas-theme";
+import { ACTIVE_USER_SCOPE_KEY, getActiveUserScope, setActiveUserScope } from "../src/lib/user-scope";
 
 import {
     DEFAULT_CANVAS_BACKGROUND_MODE,
@@ -16,8 +17,10 @@ import {
 
 const values = new Map<string, string>();
 let originalWindow: PropertyDescriptor | undefined;
+let originalScope: string;
 
 beforeEach(() => {
+    originalScope = getActiveUserScope();
     originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
     values.clear();
     Object.defineProperty(globalThis, "window", {
@@ -30,9 +33,11 @@ beforeEach(() => {
             },
         },
     });
+    setActiveUserScope(null);
 });
 
 afterEach(() => {
+    setActiveUserScope(originalScope);
     if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow);
     else Reflect.deleteProperty(globalThis, "window");
 });
@@ -180,14 +185,19 @@ describe("canvas custom appearance", () => {
     });
 
     test("stores defaults locally with the active account scope", () => {
-        window.localStorage.setItem("yingce:active-user-scope", "account-A");
+        setActiveUserScope("account-A");
         const value = { appearance: customCanvasAppearanceFromTheme("dark"), backgroundMode: "lines" as const };
         writeCanvasAppearanceDefault(value);
 
         expect(values.has("yingce:canvas-appearance-default:user:account-A")).toBe(true);
         expect(readCanvasAppearanceDefault()).toEqual(value);
 
-        window.localStorage.setItem("yingce:active-user-scope", "account-B");
+        window.localStorage.setItem(ACTIVE_USER_SCOPE_KEY, "account-B");
+        expect(readCanvasAppearanceDefault()).toEqual(value);
+
+        setActiveUserScope("account-B");
         expect(readCanvasAppearanceDefault()).toBeNull();
+        setActiveUserScope("account-A");
+        expect(readCanvasAppearanceDefault()).toEqual(value);
     });
 });
