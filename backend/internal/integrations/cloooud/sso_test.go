@@ -361,8 +361,6 @@ func TestNativeLoginStopsBeforeSessionOnPolicyFailureOrConcurrentDisable(t *test
 				}
 				return db.Model(&model.User{}).Where("id = ?", user.ID).Update("status", model.UserStatusDisabled).Error
 			}
-			activity := false
-			svc.auth.RecordActivity = func(string, string, int) { activity = true }
 			if _, err := svc.completeNativeLogin(user.ID); err == nil {
 				t.Fatal("failed policy or disabled user obtained a session")
 			}
@@ -370,8 +368,8 @@ func TestNativeLoginStopsBeforeSessionOnPolicyFailureOrConcurrentDisable(t *test
 			if err := db.Model(&model.AuthSession{}).Count(&sessions).Error; err != nil {
 				t.Fatal(err)
 			}
-			if sessions != 0 || activity {
-				t.Fatal("failed login created session or activity")
+			if sessions != 0 {
+				t.Fatal("failed login created session")
 			}
 			if scenario == "concurrent-disable" {
 				if err := db.First(user, "id = ?", user.ID).Error; err != nil {
@@ -391,7 +389,7 @@ func newCloooudTestService(t *testing.T) (*Service, *gorm.DB) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&model.User{}, &model.UserIdentity{}, &model.OAuthState{}, &model.CreditAccount{}, &model.AuthSession{}); err != nil {
+	if err := db.AutoMigrate(&model.User{}, &model.UserIdentity{}, &model.OAuthState{}, &model.CreditAccount{}, &model.AuthSession{}, &model.LoginLog{}); err != nil {
 		t.Fatal(err)
 	}
 	sqlDB, err := db.DB()
@@ -403,9 +401,8 @@ func newCloooudTestService(t *testing.T) (*Service, *gorm.DB) {
 	native := auth.New(repo, nil, nil)
 	return New(db, NativeHost{
 		CurrentUser:       native.CurrentUser,
-		Logout:            native.Logout,
+		Logout:            func(cookie string) error { return native.Logout(cookie) },
 		CreateSession:     native.SessionIssuer(),
 		EnsureSignupBonus: func(string) error { return nil },
-		RecordActivity:    func(string, string, int) {},
 	}), db
 }

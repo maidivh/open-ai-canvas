@@ -33,6 +33,7 @@ func CloooudHTTPHost() cloooud.HTTPHost {
 func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 	registerChannelOrderRoutes(r, svc)
 	registerNotificationRoutes(r, svc)
+	registerAuthProfileRoutes(r, svc)
 	r.GET("/auth/settings", func(c *gin.Context) {
 		settings, err := svc.PublicAuthSettings()
 		if err != nil {
@@ -52,6 +53,7 @@ func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 		if !available || !enforceRateLimit(c, "register:"+c.ClientIP(), policy.Request.RegisterPerHour, time.Hour) {
 			return
 		}
+		req.LoginContext = loginRequestContext(c)
 		result, err := svc.Register(req)
 		if err != nil {
 			failService(c, err)
@@ -124,7 +126,7 @@ func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		ok(c, gin.H{"reset": true})
 	})
-	r.POST("/auth/login", func(c *gin.Context) {
+	r.POST("/auth/login", rejectedLoginAudit(svc, "password"), func(c *gin.Context) {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
 		var req service.LoginRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
@@ -143,6 +145,8 @@ func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 		if !enforceRateLimit(c, "login:"+c.ClientIP()+":"+subject, policy.Request.LoginAccountPerTenMinutes, 10*time.Minute) {
 			return
 		}
+		req.LoginContext = loginRequestContext(c)
+		c.Set("login_audit_handled", true)
 		result, err := svc.Login(req)
 		if err != nil {
 			failService(c, err)
@@ -163,7 +167,7 @@ func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 		}
 		c.Redirect(http.StatusFound, target)
 	})
-	r.GET("/auth/linuxdo/callback", linuxDOCallbackHandler(svc))
+	r.GET("/auth/linuxdo/callback", rejectedLoginAudit(svc, "linuxdo"), linuxDOCallbackHandler(svc))
 	r.POST("/auth/logout", func(c *gin.Context) {
 		// [小洞免登定制] 浏览器 Cookie 跨标签共享，旧页面点退出也可能注销刚切换的新账号。
 		// 免登标记存在时先校验页面账号；不匹配就拒绝，不能删除会话或清除共享 Cookie。
@@ -173,7 +177,10 @@ func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 				return
 			}
 		}
-		_ = svc.Logout(sessionCookie(c))
+		if err := svc.Logout(sessionCookie(c), loginRequestContext(c)); err != nil {
+			failService(c, err)
+			return
+		}
 		clearSessionCookie(c)
 		ok(c, gin.H{"ok": true})
 	})
@@ -226,7 +233,7 @@ func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 
 // 兼容已在 Linux.do OAuth 应用中登记的传统回调地址，处理逻辑与 /api/auth/linuxdo/callback 完全一致。
 func RegisterOAuthCallbackRoutes(r gin.IRoutes, svc *service.Service) {
-	r.GET("/oauth/linuxdo/callback", linuxDOCallbackHandler(svc))
+	r.GET("/oauth/linuxdo/callback", rejectedLoginAudit(svc, "linuxdo"), linuxDOCallbackHandler(svc))
 }
 
 func linuxDOCallbackHandler(svc *service.Service) gin.HandlerFunc {
@@ -234,12 +241,27 @@ func linuxDOCallbackHandler(svc *service.Service) gin.HandlerFunc {
 		if !enforceRateLimit(c, "linuxdo-callback:"+c.ClientIP(), 30, 10*time.Minute) {
 			return
 		}
-		result, err := svc.CompleteLinuxDOLogin(c.Query("state"), c.Query("code"))
+		reauthentication, stateErr := svc.LinuxDOReauthenticationState(c.Query("state"))
+		if stateErr != nil {
+			if err := svc.RecordRejectedLogin("linuxdo", loginRequestContext(c), 400); err != nil {
+				log.Printf("OAuth rejected login audit write failed: error=%v", err)
+			}
+			c.Redirect(http.StatusFound, "/login?oauth_error="+url.QueryEscape("无法读取身份验证状态，请重试"))
+			return
+		}
+		c.Set("login_audit_handled", true)
+		result, err := svc.CompleteLinuxDOLogin(c.Query("state"), c.Query("code"), sessionCookie(c), loginRequestContext(c))
 		if err != nil {
+			if reauthentication {
+				c.Redirect(http.StatusFound, "/settings?section=profile&reauth=error")
+				return
+			}
 			c.Redirect(http.StatusFound, "/login?oauth_error="+url.QueryEscape(err.Error()))
 			return
 		}
-		setSessionCookie(c, result.Session.Session, result.Session.MaxAgeSecs)
+		if !result.Reauthenticated {
+			setSessionCookie(c, result.Session.Session, result.Session.MaxAgeSecs)
+		}
 		c.Redirect(http.StatusFound, result.Next)
 	}
 }
@@ -249,6 +271,7 @@ func RegisterAdminRoutes(r *gin.RouterGroup, svc *service.Service) {
 	registerAdminChannelRoutes(r, svc)
 	registerAdminSettingRoutes(r, svc)
 	registerAdminAPILogRoutes(r, svc)
+	registerAdminLoginLogRoutes(r, svc)
 }
 
 func RegisterSystemProxyRoutes(r *gin.RouterGroup, svc *service.Service) {

@@ -15,6 +15,7 @@ type (
 	EmailCodeCooldownError     = auth.EmailCodeCooldownError
 	RegisterRequest            = auth.RegisterRequest
 	LoginRequest               = auth.LoginRequest
+	LoginContext               = auth.LoginContext
 	PublicAuthSettings         = auth.PublicAuthSettings
 	AuthSessionResult          = auth.AuthSessionResult
 	AuthUser                   = auth.AuthUser
@@ -130,8 +131,8 @@ func (s *Service) CloooudHost() cloooud.NativeHost {
 	// [小洞免登定制] 注入原生 Logout，让免登模块在新登录成功后注销本浏览器的旧会话。
 	// 不在模块中另写会话删除逻辑，注销失败时由 sso.go 撤销新会话并保留原登录。
 	return cloooud.NativeHost{
-		CurrentUser: s.CurrentUser, Logout: s.Logout, CreateSession: s.authDomain().SessionIssuer(),
-		EnsureSignupBonus: s.ensureSignupBonus, RecordActivity: s.recordActivity,
+		CurrentUser: s.CurrentUser, Logout: func(cookie string) error { return s.Logout(cookie) }, CreateSession: s.authDomain().SessionIssuer(),
+		EnsureSignupBonus: s.ensureSignupBonus,
 	}
 }
 
@@ -151,8 +152,8 @@ func (s *Service) LoginRateLimitSubject(account string) (string, error) {
 	return s.authDomain().LoginRateLimitSubject(account)
 }
 
-func (s *Service) Logout(cookieValue string) error {
-	return s.authDomain().Logout(cookieValue)
+func (s *Service) Logout(cookieValue string, contexts ...LoginContext) error {
+	return s.authDomain().Logout(cookieValue, contexts...)
 }
 
 func (s *Service) CurrentUser(cookieValue string) (*model.User, error) {
@@ -219,8 +220,8 @@ func (s *Service) BeginLinuxDOLogin(nextPath string, acceptedTerms bool) (string
 	return s.authDomain().BeginLinuxDOLogin(nextPath, acceptedTerms)
 }
 
-func (s *Service) CompleteLinuxDOLogin(stateValue string, code string) (*LinuxDOCallbackResult, error) {
-	return s.authDomain().CompleteLinuxDOLogin(stateValue, code)
+func (s *Service) CompleteLinuxDOLogin(stateValue string, code string, cookieValue string, contexts ...LoginContext) (*LinuxDOCallbackResult, error) {
+	return s.authDomain().CompleteLinuxDOLogin(stateValue, code, cookieValue, contexts...)
 }
 
 func (s *Service) AdminLibTVSetting(actor *model.User) (*PublicLibTVSetting, error) {

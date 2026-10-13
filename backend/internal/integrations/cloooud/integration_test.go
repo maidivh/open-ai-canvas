@@ -52,7 +52,7 @@ func TestHostRoutesCreateNativeSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	if err := db.AutoMigrate(&model.User{}, &model.UserIdentity{}, &model.OAuthState{}, &model.AuthSession{}, &model.CreditAccount{}, &model.CreditLedgerEntry{}, &model.SystemSetting{}, &model.UserDailyActivity{}); err != nil {
+	if err := db.AutoMigrate(&model.User{}, &model.UserIdentity{}, &model.OAuthState{}, &model.AuthSession{}, &model.CreditAccount{}, &model.CreditLedgerEntry{}, &model.SystemSetting{}, &model.UserDailyActivity{}, &model.LoginLog{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Create(&model.User{ID: "owner", Username: "owner", Role: model.UserRoleAdmin, Status: model.UserStatusActive}).Error; err != nil {
@@ -97,11 +97,42 @@ func TestHostRoutesCreateNativeSession(t *testing.T) {
 	if err != nil || user.ID == "owner" || user.Role != model.UserRoleUser {
 		t.Fatalf("native session rejected: %v", err)
 	}
-	if err := svc.Logout(cookie.Value); err != nil {
-		t.Fatal(err)
+	var activity model.UserDailyActivity
+	if err := db.Where("user_id = ?", user.ID).First(&activity).Error; err != nil || activity.LoginCount != 1 {
+		t.Fatalf("SSO must record exactly one login activity: count=%d, err=%v", activity.LoginCount, err)
+	}
+	var login model.LoginLog
+	if err := db.Where("user_id = ? AND event = ?", user.ID, "login").First(&login).Error; err != nil || login.Method != "cloooud" || login.Result != "success" {
+		t.Fatalf("SSO login audit missing: %+v, err=%v", login, err)
+	}
+	staleRequest := httptest.NewRequest("POST", "/api/auth/logout", nil)
+	staleRequest.AddCookie(cookie)
+	staleRequest.AddCookie(&http.Cookie{Name: cloooud.AccountScopeCookie, Value: "1"})
+	staleRequest.Header.Set("X-Canvas-User-ID", "old-user")
+	staleResponse := httptest.NewRecorder()
+	router.ServeHTTP(staleResponse, staleRequest)
+	if staleResponse.Code < 400 || len(staleResponse.Result().Cookies()) != 0 {
+		t.Fatalf("stale tab logout must reject without clearing cookies: %d", staleResponse.Code)
+	}
+	if _, err := svc.CurrentUser(cookie.Value); err != nil {
+		t.Fatalf("stale tab revoked the new session: %v", err)
+	}
+	logoutRequest := httptest.NewRequest("POST", "/api/auth/logout", nil)
+	logoutRequest.AddCookie(cookie)
+	logoutRequest.AddCookie(&http.Cookie{Name: cloooud.AccountScopeCookie, Value: "1"})
+	logoutRequest.Header.Set("X-Canvas-User-ID", user.ID)
+	logoutRequest.Header.Set("User-Agent", "SSO-merge-test")
+	logoutResponse := httptest.NewRecorder()
+	router.ServeHTTP(logoutResponse, logoutRequest)
+	if logoutResponse.Code != http.StatusOK {
+		t.Fatalf("native logout failed: %d %s", logoutResponse.Code, logoutResponse.Body.String())
 	}
 	if _, err := svc.CurrentUser(cookie.Value); err == nil {
 		t.Fatal("native logout did not revoke SSO session")
+	}
+	var logout model.LoginLog
+	if err := db.Where("user_id = ? AND event = ?", user.ID, "logout").First(&logout).Error; err != nil || logout.Method != "cloooud" || logout.SessionRef != login.SessionRef || logout.UserAgent != "SSO-merge-test" {
+		t.Fatalf("SSO logout audit lost session identity: %+v, err=%v", logout, err)
 	}
 	spec := httptest.NewRecorder()
 	router.ServeHTTP(spec, httptest.NewRequest("GET", "https://canvas.example/api/openapi.yaml", nil))

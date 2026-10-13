@@ -17,7 +17,6 @@ type NativeHost struct {
 	Logout            func(string) error
 	CreateSession     func(*model.User) (*auth.AuthSessionResult, error)
 	EnsureSignupBonus func(string) error
-	RecordActivity    func(string, string, int)
 }
 
 func (s *Service) completeNativeLogin(userID string) (*auth.AuthSessionResult, error) {
@@ -41,7 +40,6 @@ func (s *Service) completeNativeLogin(userID string) (*auth.AuthSessionResult, e
 	if err != nil {
 		return nil, err
 	}
-	s.auth.RecordActivity(user.ID, "login", 1)
 	return result, nil
 }
 
