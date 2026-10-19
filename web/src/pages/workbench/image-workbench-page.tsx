@@ -199,6 +199,7 @@ export function WorkbenchPage({ kind }: { kind: WorkbenchKind }) {
     const [mobileTab, setMobileTab] = useState("generate");
     const [query, setQuery] = useState("");
     const creditsEnabled = useUserStore((state) => state.features.creditsEnabled);
+    const walletMode = useUserStore((state) => state.features.walletMode);
     const [estimateCredits, setEstimateCredits] = useState<number | null>(null);
     const [estimateEstimated, setEstimateEstimated] = useState(false);
     const [estimateTone, setEstimateTone] = useState<"quote" | "local" | "usage" | "loading" | "unavailable">("unavailable");
@@ -354,6 +355,7 @@ export function WorkbenchPage({ kind }: { kind: WorkbenchKind }) {
         }
         const priceChannel = resolveModelChannel(config, selectedModel);
         const localCredits = requestCreditCost({
+            walletMode,
             channelMode: priceChannel.scope === "system" ? "remote" : "local",
             modelCosts: priceChannel.modelCosts,
             model: modelOptionName(selectedModel),
@@ -363,7 +365,7 @@ export function WorkbenchPage({ kind }: { kind: WorkbenchKind }) {
             config: composerConfig,
             requirements: quoteRequirements,
         });
-        const request = modelQuoteRequest(composerConfig, selectedModel, capability, quoteRequirements);
+        const request = modelQuoteRequest(composerConfig, selectedModel, capability, quoteRequirements, walletMode);
         if (!request) {
             setEstimateCredits(localCredits);
             setEstimateEstimated(false);
@@ -389,7 +391,7 @@ export function WorkbenchPage({ kind }: { kind: WorkbenchKind }) {
                 setEstimateTone(localCredits === null ? "unavailable" : "local");
             });
         return () => controller.abort();
-    }, [capability, composerConfig, config, creditsEnabled, kind, quoteRequirements, seconds, selectedCount, selectedModel]);
+    }, [capability, composerConfig, config, creditsEnabled, walletMode, kind, quoteRequirements, seconds, selectedCount, selectedModel]);
 
     const loadTasks = useCallback(async () => {
         try {

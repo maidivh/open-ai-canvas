@@ -24,12 +24,14 @@ export function createUserColumns({
     onView,
     onEdit,
     onToggleStatus,
+    externalWallet = false,
 }: {
     actorId?: string;
     visibleColumns: Set<UserColumnKey>;
     onView: (user: AdminUser) => void;
     onEdit: (user: AdminUser) => void;
     onToggleStatus: (user: AdminUser) => Promise<void>;
+    externalWallet?: boolean;
 }): ColumnsType<AdminUser> {
     const columns: Array<ColumnsType<AdminUser>[number] & { key: UserColumnKey }> = [
         {
@@ -46,7 +48,7 @@ export function createUserColumns({
         { key: "email", title: "邮箱", dataIndex: "email", align: "center", render: (email) => email || <span className="text-foreground/40">未填写</span> },
         {
             key: "credits",
-            title: "当前积分",
+            title: externalWallet ? "保留的内部积分" : "当前积分",
             dataIndex: "availableMicrocredits",
             width: 130,
             align: "center",

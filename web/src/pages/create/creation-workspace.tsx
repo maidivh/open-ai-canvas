@@ -24,7 +24,7 @@ import { buildImageResolutionOptions, formatImageResolutionSize, supportsImageRe
 import { normalizeVideoValue, videoDurationOptions, type ImageCapabilityConfig, type VideoCapabilityConfig } from "@/lib/model-capabilities";
 import { mergedImageCapabilityConfig, type ModelRequirements } from "@/lib/model-selection";
 import { imageQualityLabel } from "@/lib/image-quality";
-import { modelQuoteDescription, modelQuoteRequest } from "@/lib/model-pricing";
+import { modelQuoteCredits, modelQuoteDescription, modelQuoteRequest } from "@/lib/model-pricing";
 import { quoteModel, type LogicalModelQuote } from "@/services/api/logical-models";
 import { modelOptionName, resolveModelChannel, type AiConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -150,16 +150,19 @@ export function CreationComposer(props: ComposerProps) {
     const interactionBusy = props.busy || props.referenceReplacementBusy;
     const canSubmit = Boolean(props.prompt.trim()) && !interactionBusy;
     const creditsEnabled = useUserStore((state) => state.features.creditsEnabled);
+    const walletMode = useUserStore((state) => state.features.walletMode);
     const priceChannel = resolveModelChannel(props.config, props.model);
-    const quoteRequest = useMemo(() => modelQuoteRequest(props.config, props.model, props.mode, props.modelRequirements), [props.config, props.mode, props.model, props.modelRequirements]);
+    const generationTaskCount = props.mode === "image" ? Math.max(1, Math.min(15, props.imageProfile.maxOutputs, Math.floor(Number(props.count) || 1))) : 1;
+    const quoteRequest = useMemo(() => modelQuoteRequest(props.config, props.model, props.mode, props.modelRequirements, walletMode, "one-task-per-output"), [props.config, props.mode, props.model, props.modelRequirements, walletMode]);
     const [routeQuote, setRouteQuote] = useState<LogicalModelQuote | null>(null);
     const canOptimizePrompt = Boolean(props.promptOptimizerProvider) && (props.mode === "image" || props.mode === "video");
     const optimizerReferences = props.references.filter((reference) => reference.active && reference.kind !== "skill");
     const credits = requestCreditCost({
+        walletMode,
         channelMode: priceChannel.scope === "system" ? "remote" : "local",
         modelCosts: priceChannel.modelCosts,
         model: modelOptionName(props.model),
-        count: props.mode === "image" ? props.count : 1,
+        count: generationTaskCount,
         seconds: props.mode === "video" ? props.seconds : 1,
         capability: props.mode,
         config: props.config,
@@ -178,8 +181,8 @@ export function CreationComposer(props: ComposerProps) {
                 if (!controller.signal.aborted) setRouteQuote(null);
             });
         return () => controller.abort();
-    }, [creditsEnabled, quoteRequest]);
-    const generationCredits = routeQuote ? routeQuote.amountMicrocredits / 1_000_000 : credits;
+    }, [creditsEnabled, walletMode, quoteRequest]);
+    const generationCredits = routeQuote ? modelQuoteCredits(routeQuote, generationTaskCount) : credits;
     const showCost = creditsEnabled && generationCredits !== null && generationCredits !== undefined;
     const formattedCredits = generationCredits?.toLocaleString("zh-CN", { maximumFractionDigits: 6 });
     const actionLabel = props.referenceReplacementBusy ? "正在替换参考图" : interactionBusy || (props.generationActive && !canSubmit) ? "生成中" : showCost ? `${routeQuote?.estimated ? "预估" : "消耗"} ${formattedCredits} 积分，发送` : "发送";
@@ -415,7 +418,7 @@ export function CreationComposer(props: ComposerProps) {
                 title={!canSubmit && !interactionBusy ? "输入创作想法后即可生成" : actionLabel}
             >
                 {showWorkingGlow ? <WorkingGlow active color="var(--creation-text)" radius="999px" /> : null}
-                {showCost ? <span className="creation-submit-cost" title={routeQuote ? modelQuoteDescription(routeQuote) : undefined}><CreditSymbol /><span>{routeQuote?.estimated ? `预估:${formattedCredits}` : formattedCredits}</span></span> : null}
+                {showCost ? <span className="creation-submit-cost" title={routeQuote ? modelQuoteDescription(routeQuote, generationTaskCount, walletMode) : undefined}><CreditSymbol /><span>{routeQuote?.estimated ? `预估:${formattedCredits}` : formattedCredits}</span></span> : null}
                 <span className="creation-submit-action" aria-hidden>{showWorkingSpinner ? <LoaderCircle className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}<span>{showWorkingSpinner ? "生成中" : "开始创作"}</span></span>
             </Button>
         </footer>

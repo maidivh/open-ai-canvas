@@ -1,16 +1,24 @@
 import { describe, expect, test } from "bun:test";
 
-import { modelQuoteRequest, normalizeTierResolution, priceTierSummaryLabel, priceTiersForCurrentSelection, requestCreditCost } from "../src/lib/model-pricing";
+import { modelQuoteCredits, modelQuoteDescription, modelQuoteRequest, normalizeTierResolution, priceTierSummaryLabel, priceTiersForCurrentSelection, requestCreditCost } from "../src/lib/model-pricing";
 import type { ModelRequirements } from "../src/lib/model-selection";
 import { createModelChannel, defaultConfig, normalizeConfigSnapshot, resolveModelChannel, type AiConfig } from "../src/stores/use-config-store";
 import { buildNodeConfig } from "../src/components/canvas/canvas-node-prompt-panel";
 import { buildGenerationConfig } from "../src/lib/canvas/canvas-project-generation";
 import { modelRequestOptions } from "../src/lib/model-selection";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
+import { runBackendGenerationTaskBatch } from "../src/services/api/generation-task";
+import type { CreateTaskInput, GenerationTask } from "../src/services/api/task-center";
 
-function systemConfig(input: { capability?: "image" | "video"; logicalModelId?: string; tiers: Array<{ selector: Record<string, string>; billingMode: "fixed_request" | "per_second" | "token"; unitPriceMicrocredits: number; outputTokenPriceMicrocredits?: number }> }) {
+test("external wallets wait for the server quote instead of displaying unrounded local prices", () => {
+    const options = { channelMode: "remote", model: "image", modelCosts: [{ model: "image", billingMode: "fixed_request" as const, unitPriceMicrocredits: 200_000 }], count: 3 };
+    expect(requestCreditCost({ ...options, walletMode: "internal" })).toBeCloseTo(0.6);
+    expect(requestCreditCost({ ...options, walletMode: "external" })).toBeNull();
+});
+
+function systemConfig(input: { capability?: "image" | "video" | "text" | "audio"; logicalModelId?: string; tiers: Array<{ selector: Record<string, string>; billingMode: "fixed_request" | "per_second" | "token"; unitPriceMicrocredits: number; outputTokenPriceMicrocredits?: number }> }) {
     const capability = input.capability || "video";
-    const model = capability === "video" ? "agnes-video-2.5" : "image-model";
+    const model = capability === "video" ? "agnes-video-2.5" : `${capability}-model`;
     const channel = createModelChannel({
         id: "system-channel",
         name: "系统渠道",
@@ -280,5 +288,91 @@ describe("model request pricing", () => {
         expect(modelQuoteRequest(config, config.model, "video", requirements)).toMatchObject({ channelId: "system-channel", modelKey: "agnes-video-2.5", intent: { options: { videoGenerateAudio: false, vquality: "1080p" } } });
         expect(modelQuoteRequest(config, config.model, "video", requirements)?.logicalModelID).toBeUndefined();
         expect(modelQuoteRequest(config, config.model, "image", requirements)).toBeUndefined();
+    });
+
+    test.each(["image", "text", "audio"] as const)("external direct %s models request server quotes without logical-model IDs", (capability) => {
+        const config = systemConfig({ capability, tiers: [{ selector: {}, billingMode: "fixed_request", unitPriceMicrocredits: 200_000 }] });
+        const requirements: ModelRequirements = { capability, options: { imageCount: 3, maxTokens: 256, duration: 8 } };
+        const request = modelQuoteRequest(config, config.model, capability, requirements, "external");
+        expect(request).toMatchObject({ channelId: "system-channel", modelKey: `${capability}-model`, intent: { capability, options: requirements.options } });
+        expect(request?.logicalModelID).toBeUndefined();
+        expect(modelQuoteRequest(config, config.model, capability, requirements, "internal")).toBeUndefined();
+        expect(modelQuoteRequest(config, config.model, capability, requirements)).toBeUndefined();
+    });
+
+    test("external mode does not route custom channels through platform quote APIs", () => {
+        const config = systemConfig({ capability: "image", tiers: [{ selector: {}, billingMode: "fixed_request", unitPriceMicrocredits: 200_000 }] });
+        config.channels[0].scope = "user";
+        expect(modelQuoteRequest(config, config.model, "image", undefined, "external")).toBeUndefined();
+    });
+
+    test("split image tasks quote one output each, while a workbench task quotes all outputs once", () => {
+        const config = systemConfig({ capability: "image", tiers: [{ selector: {}, billingMode: "fixed_request", unitPriceMicrocredits: 200_000 }] });
+        const requirements: ModelRequirements = { capability: "image", options: { count: 3, size: "16:9", quality: "high" } };
+        const split = modelQuoteRequest(config, config.model, "image", requirements, "external", "one-task-per-output");
+        expect(split?.intent.options).toMatchObject({ count: 1, size: "16:9", quality: "high" });
+        const single = modelQuoteRequest(config, config.model, "image", requirements, "external");
+        expect(single?.intent.options.count).toBe(3);
+        expect(requirements.options?.count).toBe(3);
+        expect(config.count).toBe("3");
+    });
+
+    test("batch display sums already-rounded per-task quotes instead of rounding the raw batch price", () => {
+        const taskQuote = { logicalModelId: "", billingMode: "fixed_request", amountMicrocredits: 1_000_000, quantity: 1, estimated: false };
+        expect(modelQuoteDescription(taskQuote, 3)).toContain("3 积分");
+        expect(modelQuoteDescription(taskQuote, 3)).toContain("3 笔任务");
+        expect(modelQuoteDescription(taskQuote)).toContain("1 积分");
+        expect(taskQuote.amountMicrocredits).toBe(1_000_000);
+        expect(modelQuoteDescription({ ...taskQuote, amountMicrocredits: 200_000 }, 3)).toContain("0.6 积分");
+        expect(modelQuoteDescription({ ...taskQuote, amountMicrocredits: 0 }, 3)).toContain("0 积分");
+    });
+
+    test.each([false, true])("external token quotes describe the authorization cap and refunds (video formula: %s)", (withVideoEstimate) => {
+        const quote = {
+            logicalModelId: "", billingMode: "token", amountMicrocredits: 20_000_000, quantity: 1, estimated: true,
+            ...(withVideoEstimate ? { videoTokenEstimate: {
+                formulaTokens: 100, reservedTokens: 120, reservationMarginPercent: 20,
+                outputWidth: 1280, outputHeight: 720, framesPerSecond: 24, outputSeconds: 5,
+                referenceSeconds: 0, referenceDurationEstimated: false, dimensionsEstimated: false,
+            } } : {}),
+        };
+        const external = modelQuoteDescription(quote, 3, "external");
+        expect(external).toContain("3 笔任务合计预扣上限 60 积分");
+        expect(external).toContain("成功后按实际用量结算并退回差额");
+        expect(external).toContain("超出预扣上限时转入核账，不自动补扣");
+        expect(external).not.toContain("预计消耗");
+        expect(external).not.toContain("并非费用上限");
+        expect(external).not.toContain("可能补扣");
+        if (withVideoEstimate) expect(external).toContain("未返回用量时按火山引擎公式结算");
+        const internal = modelQuoteDescription(quote, 3, "internal");
+        expect(internal).toBe(modelQuoteDescription(quote, 3));
+        expect(internal).toContain("3 笔任务合计预计消耗 60 积分");
+        expect(internal).toContain("预估金额并非费用上限");
+        expect(internal).toContain("可能补扣或退回差额");
+    });
+
+    test("three creation outputs are three separately quoted billing tasks", async () => {
+        const config = systemConfig({ capability: "image", tiers: [{ selector: {}, billingMode: "fixed_request", unitPriceMicrocredits: 200_000 }] });
+        const tasks: CreateTaskInput[] = [];
+        const taskQuote = { logicalModelId: "", billingMode: "fixed_request", amountMicrocredits: 1_000_000, quantity: 1, estimated: false };
+        const results = await runBackendGenerationTaskBatch({
+            mode: "image", prompt: "three independent images", config: { ...config, count: "1" }, count: 3,
+            referenceImages: [], referenceVideos: [], referenceAudios: [],
+        }, {
+            createId: () => "unused",
+            createTask: async (input) => {
+                tasks.push(input);
+                return { id: `image-${tasks.length}`, type: input.type, prompt: input.prompt || "", status: "succeeded", attempts: 1, createdAt: "", updatedAt: "", resultJson: JSON.stringify({ images: [{ dataUrl: "https://example.test/image.png" }] }) } satisfies GenerationTask;
+            },
+            waitTask: async (_id, options) => options!.initialTask!,
+        });
+        expect(results.every((result) => result.status === "fulfilled")).toBe(true);
+        expect(tasks).toHaveLength(3);
+        for (const task of tasks) {
+            expect(task.input).toMatchObject({ config: { count: "1" }, metadata: { batchCount: 3 } });
+        }
+        const actualBillingTotal = tasks.reduce((sum) => sum + taskQuote.amountMicrocredits, 0) / 1_000_000;
+        expect(actualBillingTotal).toBe(3);
+        expect(modelQuoteCredits(taskQuote, 3)).toBe(actualBillingTotal);
     });
 });

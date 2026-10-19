@@ -53,6 +53,7 @@ export function ModelPicker({
     modelFilter,
 }: ModelPickerProps) {
     const creditsEnabled = useUserStore((state) => state.features.creditsEnabled);
+    const walletMode = useUserStore((state) => state.features.walletMode);
     const pickerId = useId();
     // 双保险：即使 store merge 写出非法 theme，这里也兜底到 dark，避免 "reading 'node'" 崩溃
     const rawTheme = useActiveTheme();
@@ -70,8 +71,8 @@ export function ModelPicker({
     const resolvedCurrent = isDirectSystemModel(config, storedCurrent) ? storedCurrent : resolveCompatibleModel(config, storedCurrent, selectionRequirements) || storedCurrent;
     // 旧画布可能保存过已下架或前端历史内置模型；它们不能重新进入当前可选目录。
     const current = options.includes(resolvedCurrent) ? resolvedCurrent : "";
-    const currentPrice = modelMenuPrice(config, current, capability, false, requirements);
-    const quoteRequest = useMemo(() => modelQuoteRequest(config, current, capability, requirements), [capability, config, current, requirements]);
+    const currentPrice = modelMenuPrice(config, current, capability, false, requirements, walletMode);
+    const quoteRequest = useMemo(() => modelQuoteRequest(config, current, capability, requirements, walletMode), [capability, config, current, requirements, walletMode]);
     const [routeQuote, setRouteQuote] = useState<LogicalModelQuote | undefined>();
     const creationVariant = variant === "creation";
 
@@ -103,7 +104,7 @@ export function ModelPicker({
                 if (!controller.signal.aborted) setRouteQuote(undefined);
             });
         return () => controller.abort();
-    }, [creditsEnabled, quoteRequest, showSelectedPrice]);
+    }, [creditsEnabled, walletMode, quoteRequest, showSelectedPrice]);
 
     useEffect(() => {
         const closeOtherPicker = (event: Event) => {
@@ -250,6 +251,7 @@ export function ModelPicker({
                                             label={group.kind === "product" ? modelGroup.label : undefined}
                                             requirements={requirements}
                                             showPrice={showOptionPrices && creditsEnabled}
+                                            walletMode={walletMode}
                                             disabledReason={disabledReason}
                                             showDescription
                                         />
@@ -300,7 +302,7 @@ export function ModelPicker({
                             <ModelIcon config={config} model={current} />
                         </span>
                         <span className="min-w-0 flex-1 truncate">{current ? (creationVariant ? pickerModelDisplayName(config, current, showConfiguredModelName) : pickerModelOptionLabel(config, current, showConfiguredModelName)) : placeholder}</span>
-                        {showSelectedPrice && creditsEnabled ? <ModelPrice price={currentPrice} quote={routeQuote} compact /> : null}
+                        {showSelectedPrice && creditsEnabled ? <ModelPrice price={currentPrice} quote={routeQuote} walletMode={walletMode} compact /> : null}
                     </span>
                     <ChevronDown className={cn("canvas-model-picker-chevron", open && "is-open")} aria-hidden="true" />
                 </button>
@@ -340,6 +342,7 @@ export function ModelLabel({
     showPrice,
     disabledReason,
     showDescription,
+    walletMode,
 }: {
     config: AiConfig;
     model: string;
@@ -352,6 +355,7 @@ export function ModelLabel({
     showPrice: boolean;
     disabledReason?: string;
     showDescription: boolean;
+    walletMode?: "internal" | "external";
 }) {
     const meta = modelMenuMeta(model, capability);
     const channel = resolveModelChannel(config, model);
@@ -375,7 +379,7 @@ export function ModelLabel({
                     {showPrice ? (
                         <span className="canvas-model-picker-option-price">
                             {/* 候选模型展示自身价目；当前参数的精确报价只在选中后的触发器显示。 */}
-                            <ModelPrice price={modelMenuPrice(config, model, capability, true, requirements)} />
+                            <ModelPrice price={modelMenuPrice(config, model, capability, true, requirements, walletMode)} />
                         </span>
                     ) : null}
                     <ModelAvailabilityBadge availability={modelAvailability(config, model)} available={logicalCost?.available ?? true} showAvailability={channel.scope === "system"} />
@@ -456,11 +460,12 @@ function formatDurationSummary(profile: NonNullable<ReturnType<typeof modelCapab
 
 type ModelMenuPrice = { kind: "tiers"; label: string; compactLabel: string; title: string } | { kind: "estimate"; label?: string; title?: string } | { kind: "fixed"; value: number; unit: "次" | "秒" };
 
-function modelMenuPrice(config: AiConfig, model: string, capability?: ModelCapability, summary = false, requirements?: ModelRequirements): ModelMenuPrice | null | undefined {
+function modelMenuPrice(config: AiConfig, model: string, capability?: ModelCapability, summary = false, requirements?: ModelRequirements, walletMode?: "internal" | "external"): ModelMenuPrice | null | undefined {
     if (!model) return undefined;
     const channel = resolveModelChannel(config, model);
     const cost = channel.modelCosts?.find((item) => item.model === modelOptionName(model));
     if (!cost) return channel.scope === "system" ? null : undefined;
+    if (walletMode === "external") return cost.pricePolicy === "channel" && !cost.logicalPriceTiers?.length ? null : { kind: "estimate", label: "按整积分结算", title: "以服务端报价为准，每笔账单分别向上取整" };
     if (cost.pricePolicy === "channel") {
         const tiers = cost.logicalPriceTiers || [];
         if (!tiers.length) return null;
@@ -528,12 +533,12 @@ function tierSpecificationLabel(tier: NonNullable<NonNullable<AiConfig["channels
     return details.length ? details.join(" / ") : "默认规格";
 }
 
-function ModelPrice({ price, quote, compact = false }: { price: ModelMenuPrice | null | undefined; quote?: LogicalModelQuote; compact?: boolean }) {
+function ModelPrice({ price, quote, walletMode, compact = false }: { price: ModelMenuPrice | null | undefined; quote?: LogicalModelQuote; walletMode?: "internal" | "external"; compact?: boolean }) {
     if (quote) {
         const amount = (quote.amountMicrocredits / 1_000_000).toLocaleString("zh-CN", { maximumFractionDigits: 6 });
         const label = quote.estimated ? `预估:${amount}` : `${amount}`;
         return (
-            <span className="model-picker-price inline-flex shrink-0 items-center gap-1 text-[var(--fs-tiny)] font-bold tabular-nums" aria-label={modelQuoteDescription(quote)}>
+            <span className="model-picker-price inline-flex shrink-0 items-center gap-1 text-[var(--fs-tiny)] font-bold tabular-nums" aria-label={modelQuoteDescription(quote, 1, walletMode)}>
                 <Coins className="model-picker-price-icon" aria-hidden="true" />
                 {compact ? label : `${label} 积分`}
             </span>
@@ -550,7 +555,7 @@ function ModelPrice({ price, quote, compact = false }: { price: ModelMenuPrice |
         );
     }
     if (price.kind === "estimate") {
-        return <span className="model-picker-price inline-flex shrink-0 items-center text-[var(--fs-tiny)] font-semibold"><Coins className="model-picker-price-icon" aria-hidden="true" />{price.label || "按量预估"}</span>;
+        return <span className="model-picker-price inline-flex shrink-0 items-center text-[var(--fs-tiny)] font-semibold" title={price.title}><Coins className="model-picker-price-icon" aria-hidden="true" />{price.label || "按量预估"}</span>;
     }
     return (
         <span className="model-picker-price inline-flex shrink-0 items-center gap-1 text-[var(--fs-tiny)] font-bold tabular-nums">

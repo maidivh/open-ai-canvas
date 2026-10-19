@@ -29,18 +29,20 @@ const (
 )
 
 type FeatureAvailability struct {
-	WelcomeEnabled               bool `json:"welcomeEnabled"`
-	ShortDramaEnabled            bool `json:"shortDramaEnabled"`
-	TaskCenterEnabled            bool `json:"taskCenterEnabled"`
-	CreditsEnabled               bool `json:"creditsEnabled"`
-	CustomChannelsEnabled        bool `json:"customChannelsEnabled"`
-	FrontendModelsEnabled        bool `json:"frontendModelsEnabled"`
-	PluginCenterEnabled          bool `json:"pluginCenterEnabled"`
-	SystemPluginsVisibleToUsers  bool `json:"systemPluginsVisibleToUsers"`
-	InspirationSourcesVisible    bool `json:"inspirationSourcesVisible"`
-	TimelineTranscriptionEnabled bool `json:"timelineTranscriptionEnabled"`
-	ImageWorkbenchEnabled        bool `json:"imageWorkbenchEnabled"`
-	VideoWorkbenchEnabled        bool `json:"videoWorkbenchEnabled"`
+	WalletMode                   string `json:"walletMode,omitempty"`
+	RechargeURL                  string `json:"rechargeUrl,omitempty"`
+	WelcomeEnabled               bool   `json:"welcomeEnabled"`
+	ShortDramaEnabled            bool   `json:"shortDramaEnabled"`
+	TaskCenterEnabled            bool   `json:"taskCenterEnabled"`
+	CreditsEnabled               bool   `json:"creditsEnabled"`
+	CustomChannelsEnabled        bool   `json:"customChannelsEnabled"`
+	FrontendModelsEnabled        bool   `json:"frontendModelsEnabled"`
+	PluginCenterEnabled          bool   `json:"pluginCenterEnabled"`
+	SystemPluginsVisibleToUsers  bool   `json:"systemPluginsVisibleToUsers"`
+	InspirationSourcesVisible    bool   `json:"inspirationSourcesVisible"`
+	TimelineTranscriptionEnabled bool   `json:"timelineTranscriptionEnabled"`
+	ImageWorkbenchEnabled        bool   `json:"imageWorkbenchEnabled"`
+	VideoWorkbenchEnabled        bool   `json:"videoWorkbenchEnabled"`
 }
 
 type PublicFeatureAvailability struct {
@@ -105,7 +107,7 @@ func (s *Service) UpdateFeatureAvailability(actor *model.User, value FeatureAvai
 	if err := s.appendAdminAudit(actor, "feature_availability.update", "system_setting", featureAvailabilitySettingKey, "更新功能开放配置", map[string]any{"before": before, "after": value}); err != nil {
 		return nil, err
 	}
-	return publicFeatureAvailability(&setting, value), nil
+	return s.FeatureAvailability()
 }
 
 func (s *Service) FeatureEnabled(feature string) (bool, error) {
@@ -177,7 +179,24 @@ func (s *Service) RequireFeature(feature string) error {
 	}
 }
 
-func (s *Service) readFeatureAvailability() (*model.SystemSetting, FeatureAvailability, error) {
+func (s *Service) readFeatureAvailability() (settingResult *model.SystemSetting, featureResult FeatureAvailability, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			return
+		}
+		cfg, err := s.repo.SharedWalletSettings()
+		if err != nil {
+			resultErr = err
+			return
+		}
+		featureResult.WalletMode = ""
+		featureResult.RechargeURL = ""
+		if cfg.Mode == "external" {
+			featureResult.WalletMode=cfg.Mode
+			featureResult.RechargeURL=cfg.RechargeURL
+			featureResult.CreditsEnabled = true
+		}
+	}()
 	setting, err := s.repo.SystemSetting(featureAvailabilitySettingKey)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, DefaultFeatureAvailability(), nil

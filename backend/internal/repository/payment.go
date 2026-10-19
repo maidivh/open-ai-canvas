@@ -105,6 +105,9 @@ func (r *Repository) CreatePaymentOrderWithProductReservation(order *model.Payme
 	var existing model.PaymentOrder
 	created := false
 	err := r.db.Transaction(func(tx *gorm.DB) error {
+		if err := requireInternalWalletTransaction(tx); err != nil {
+			return err
+		}
 		var product model.TopupProduct
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&product, "id = ?", order.ProductID).Error; err != nil {
 			return err

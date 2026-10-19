@@ -79,6 +79,9 @@ func runAgentToolTask(ctx context.Context, input canvasGenerationInput) (map[str
 }
 
 func postAgentRequest(ctx context.Context, input canvasGenerationInput, path string, body map[string]interface{}, protocol string) (map[string]interface{}, error) {
+	if err := enforceWalletTextBody(body, input, protocol); err != nil {
+		return nil, err
+	}
 	if input.StreamText {
 		return postStreamingAgent(ctx, input.Config, path, body, protocol, input.OnTextDelta, input.OnReasoningDelta)
 	}
@@ -152,6 +155,9 @@ func runDeclarativeAgentTask(ctx context.Context, input canvasGenerationInput, a
 		}
 		applyTextThinking(body, input, wire)
 		applyAgentOutputLimit(body, agentStepOutputLimit(input), wire)
+		if err := enforceWalletTextBody(body, input, wire); err != nil {
+			return nil, err
+		}
 		normalizeAgentToolChoice(body, input, wire)
 		spec.Body = body
 		if input.StreamText {

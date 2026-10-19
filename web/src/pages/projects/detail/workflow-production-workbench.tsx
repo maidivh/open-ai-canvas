@@ -88,6 +88,7 @@ export default function WorkflowProductionWorkbench(props: Props) {
     const effectiveConfig = useEffectiveConfig();
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
     const creditsEnabled = useUserStore((state) => state.features.creditsEnabled);
+    const walletMode = useUserStore((state) => state.features.walletMode);
     const [form] = Form.useForm<ShotEditorValues>();
     const watchedDuration = Form.useWatch("durationSeconds", form);
     const watchedTitle = Form.useWatch("title", form);
@@ -174,6 +175,7 @@ export default function WorkflowProductionWorkbench(props: Props) {
     }), [aspectRatio, effectiveConfig, generationCapability, generationSeconds, imageQuality, resolution, routedModel, videoBooleanOptions]);
     const priceChannel = resolveModelChannel(generationConfig, routedModel);
     const configuredCredits = requestCreditCost({
+        walletMode,
         channelMode: priceChannel.scope === "system" ? "remote" : "local",
         modelCosts: priceChannel.modelCosts,
         model: modelOptionName(routedModel),
@@ -183,7 +185,7 @@ export default function WorkflowProductionWorkbench(props: Props) {
         config: generationConfig,
         requirements: modelRequirements,
     });
-    const quoteRequest = useMemo(() => modelQuoteRequest(generationConfig, routedModel, generationCapability, modelRequirements), [generationCapability, generationConfig, modelRequirements, routedModel]);
+    const quoteRequest = useMemo(() => modelQuoteRequest(generationConfig, routedModel, generationCapability, modelRequirements, walletMode), [generationCapability, generationConfig, modelRequirements, routedModel, walletMode]);
     const quoteRequestKey = JSON.stringify(quoteRequest || null);
     const [routeQuote, setRouteQuote] = useState<LogicalModelQuote | null>(null);
     const generationCredits = routeQuote ? routeQuote.amountMicrocredits / 1_000_000 : configuredCredits;
@@ -228,7 +230,7 @@ export default function WorkflowProductionWorkbench(props: Props) {
         return () => controller.abort();
         // quoteRequestKey captures the normalized request without retriggering on object identity.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [creditsEnabled, quoteRequestKey]);
+    }, [creditsEnabled, walletMode, quoteRequestKey]);
 
     useEffect(() => {
         const shotDurationSeconds = Math.max(0.5, (revision?.durationMs || selectedShot?.durationMs || 3000) / 1000);
@@ -548,7 +550,7 @@ export default function WorkflowProductionWorkbench(props: Props) {
                         </div>
                         <footer className="workflow-editor-actions">
                             <div className="workflow-generation-cost" aria-live="polite">
-                                {creditsEnabled && formattedGenerationCredits ? <><CreditSymbol /><span title={routeQuote ? modelQuoteDescription(routeQuote) : undefined}>本次{routeQuote?.estimated ? "预估" : "费用"} {formattedGenerationCredits} 积分</span></> : creditsEnabled && routedModel ? <span>本次费用将在提交时按实际规格计算</span> : null}
+                                {creditsEnabled && formattedGenerationCredits ? <><CreditSymbol /><span title={routeQuote ? modelQuoteDescription(routeQuote, 1, walletMode) : undefined}>本次{routeQuote?.estimated ? "预估" : "费用"} {formattedGenerationCredits} 积分</span></> : creditsEnabled && routedModel ? <span>本次费用将在提交时按实际规格计算</span> : null}
                             </div>
                             <div className="flex items-center gap-2"><Button danger icon={<Trash2 className="size-4" />} loading={deleteShot.isPending} disabled={saveShot.isPending || selectedShotSubmitting || changeAssetBinding.isPending} onClick={requestDeleteShot}>删除镜头</Button><Button htmlType="submit" icon={<Save className="size-4" />} loading={saveShot.isPending} disabled={!editorDirty || deleteShot.isPending}>保存脚本</Button><Button type="primary" icon={<Play className="size-4" />} loading={selectedShotSubmitting || shotTask?.status === "queued" || shotTask?.status === "running"} disabled={deleteShot.isPending} onClick={() => void generateArtifact()}>{selectedShotSubmitting ? `${stageCopy.action}（正在提交）` : shotTask?.status === "queued" || shotTask?.status === "running" ? `${stageCopy.action}（已运行${shotTaskElapsed}）` : shotTask?.status === "failed" ? `${stageCopy.action}（上次失败，可重试）` : shotTask?.status === "succeeded" && !newestArtifact ? `${stageCopy.action}（已完成，正在同步）` : newestArtifact ? `${stageCopy.action}（已生成）` : stageCopy.action}</Button></div>
                         </footer>

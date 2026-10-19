@@ -15,12 +15,13 @@ export function WorkspaceSidebarCheckin({ collapsed }: { collapsed: boolean }) {
     const user = useUserStore((state) => state.user);
     const creditsEnabled = useUserStore((state) => state.features.creditsEnabled);
     const brandName = useAppearanceStore((state) => state.appearance.brandName);
-    const { policy, refresh } = useWalletBalance(user?.id, Boolean(user) && creditsEnabled);
+    const { policy, walletMode, refresh } = useWalletBalance(user?.id, Boolean(user) && creditsEnabled);
     const { message } = App.useApp();
     const [claiming, setClaiming] = useState(false);
 
     const visible = shouldShowSidebarCheckin({
         creditsEnabled,
+        walletMode,
         checkinBonusMicrocredits: policy?.checkinBonusMicrocredits,
         checkedInToday: policy?.checkedInToday,
     });

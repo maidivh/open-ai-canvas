@@ -5,6 +5,9 @@ import { resolve } from "node:path";
 import { sidebarCheckinTitle, shouldShowSidebarCheckin } from "../src/lib/sidebar-checkin";
 
 describe("sidebar checkin offer", () => {
+    test("external wallets never offer local checkin rewards", () => {
+        expect(shouldShowSidebarCheckin({ creditsEnabled: true, walletMode: "external", checkinBonusMicrocredits: 100_000_000, checkedInToday: false })).toBe(false);
+    });
     test("shows only when credits and a checkin bonus are enabled and today is unclaimed", () => {
         expect(shouldShowSidebarCheckin({ creditsEnabled: true, checkinBonusMicrocredits: 100_000_000, checkedInToday: false })).toBe(true);
         expect(shouldShowSidebarCheckin({ creditsEnabled: false, checkinBonusMicrocredits: 100_000_000, checkedInToday: false })).toBe(false);

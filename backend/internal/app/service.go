@@ -152,7 +152,7 @@ func newService(repo *repository.Repository, dataDir string) *Service {
 		}
 	}
 	service := &Service{repo: repo, dataDir: dataDir, activeStorageTests: make(map[string]bool), activeCancels: make(map[string]context.CancelFunc), agentConflictStreak: make(map[string]int), agentSchedulerWake: make(chan struct{}, 1), taskDispatcherWake: make(chan struct{}, 1), piRunners: make(map[string]context.CancelFunc), coordinator: coordinator, runtimeErr: err, pluginRuntime: pluginRuntime, pluginRuntimeErr: pluginRuntimeErr, paymentRegistry: paymentRegistry, workerID: newID(), routeCatalogTTL: 30 * time.Second, routeCatalogMaxStale: 5 * time.Minute, routeHealthBlocked: make(map[string]time.Time), geminiCacheLocks: make(map[string]*geminiCacheKeyLock)}
-	service.taskBillingCoordinator = newTaskBillingCoordinator(service.repo)
+	service.taskBillingCoordinator = newTaskBillingCoordinator(walletBillingRepository{Repository: service.repo, service: service})
 	service.taskTerminalCoordinator = newTaskTerminalCoordinator(service)
 	service.taskRouteExecutor = newTaskRouteExecutor(service)
 	service.taskWorkerCoordinator = newTaskWorkerCoordinator(service)
@@ -175,7 +175,7 @@ func (s *Service) taskBilling() *taskBillingCoordinator {
 		return s.taskBillingCoordinator
 	}
 	// 部分单元测试直接构造 Service 字面量；延迟创建保持这些测试和内部工具兼容。
-	return newTaskBillingCoordinator(s.repo)
+	return newTaskBillingCoordinator(walletBillingRepository{Repository: s.repo, service: s})
 }
 
 func (s *Service) StartWorker() {
@@ -188,6 +188,7 @@ func (s *Service) StartWorker() {
 	s.startResourceDeletionWorker(ctx)
 	s.startSkillSyncWorker(ctx)
 	s.startPaymentWorker(ctx)
+	s.startSharedWalletWorker(ctx)
 	go s.syncAgentSessionLimit()
 	s.runWorkerLoop(func(ctx context.Context) {
 		ticker := time.NewTicker(3 * time.Second)

@@ -15,6 +15,9 @@ import (
 func (r *Repository) AdjustCredits(userID string, actorUserID string, amount int64, note string) (*model.CreditAccount, error) {
 	var account model.CreditAccount
 	err := r.db.Transaction(func(tx *gorm.DB) error {
+		if err := requireInternalWalletTransaction(tx); err != nil {
+			return err
+		}
 		account = model.CreditAccount{UserID: userID}
 		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&account).Error; err != nil {
 			return err
@@ -59,6 +62,9 @@ func (r *Repository) AdjustCredits(userID string, actorUserID string, amount int
 
 func (r *Repository) CreateRedeemBatch(batch *model.RedeemBatch, codes []model.RedeemCode) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := requireInternalWalletTransaction(tx); err != nil {
+			return err
+		}
 		if err := tx.Create(batch).Error; err != nil {
 			return err
 		}
@@ -136,6 +142,9 @@ func (r *Repository) AdminRedeemCodes(batchID string, status string, limit int, 
 func (r *Repository) RedeemCode(userID string, codeHash string, redeemedIP string) (*model.CreditAccount, error) {
 	var account model.CreditAccount
 	err := r.db.Transaction(func(tx *gorm.DB) error {
+		if err := requireInternalWalletTransaction(tx); err != nil {
+			return err
+		}
 		var code model.RedeemCode
 		if err := tx.First(&code, "code_hash = ?", codeHash).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {

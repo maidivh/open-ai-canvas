@@ -124,6 +124,14 @@ func (s *Service) UpdateCreditPolicy(actor *model.User, policy CreditPolicy) (Cr
 }
 
 func (s *Service) ensureSignupBonus(userID string) error {
+	cfg, err := s.repo.SharedWalletSettings()
+	if err != nil {
+		return err
+	}
+	if cfg.Mode == "external" {
+		_, _, err = s.repo.GrantCreditsOnce(userID, model.CreditLedgerSignupBonus, 0, "signup:"+userID, "外部钱包注册不发放本地赠分")
+		return err
+	}
 	enabled, err := s.FeatureEnabled(FeatureCredits)
 	if err != nil || !enabled {
 		return err
@@ -137,6 +145,9 @@ func (s *Service) ensureSignupBonus(userID string) error {
 }
 
 func (s *Service) CheckinCredits(user *model.User) (*model.CreditAccount, bool, error) {
+	if err := s.repo.RequireInternalWallet(); err != nil {
+		return nil, false, err
+	}
 	if user == nil {
 		return nil, false, Unauthorized("请先登录")
 	}

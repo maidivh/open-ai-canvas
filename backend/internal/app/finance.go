@@ -21,12 +21,14 @@ import (
 const CreditScale int64 = 1_000_000
 
 type WalletSummary struct {
-	Account model.CreditAccount       `json:"account"`
-	Entries []model.CreditLedgerEntry `json:"entries"`
-	Total   int64                     `json:"total"`
-	Page    int                       `json:"page"`
-	Limit   int                       `json:"pageSize"`
-	Policy  PublicCreditPolicy        `json:"policy"`
+	WalletMode  string                    `json:"walletMode"`
+	RechargeURL string                    `json:"rechargeUrl"`
+	Account     model.CreditAccount       `json:"account"`
+	Entries     []model.CreditLedgerEntry `json:"entries"`
+	Total       int64                     `json:"total"`
+	Page        int                       `json:"page"`
+	Limit       int                       `json:"pageSize"`
+	Policy      PublicCreditPolicy        `json:"policy"`
 }
 
 type RedeemBatchPage struct {
@@ -105,15 +107,27 @@ type ResolveBillingBatchResult struct {
 }
 
 type tokenBillingEstimate struct {
-	InputTokens  int64
-	OutputTokens int64
-	Video        *VideoTokenEstimate
-	Err          error
+	InputTokens         int64
+	OutputTokens        int64
+	ExplicitOutputLimit int64
+	Proxy               bool
+	ProxyLimits         map[string]int64
+	ExternalBudget      bool
+	InvalidMultiplicity bool
+	Video               *VideoTokenEstimate
+	Err                 error
 }
 
 func (s *Service) Wallet(user *model.User, entryType string, page int, limit int) (*WalletSummary, error) {
 	if user == nil {
 		return nil, Unauthorized("请先登录")
+	}
+	cfg, err := s.repo.SharedWalletSettings()
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Mode == "external" {
+		return s.externalWalletSummary(user, cfg, entryType, page, limit)
 	}
 	if err := s.RequireFeature(FeatureCredits); err != nil {
 		return nil, err
@@ -141,7 +155,7 @@ func (s *Service) Wallet(user *model.User, entryType string, page int, limit int
 	if err != nil {
 		return nil, err
 	}
-	return &WalletSummary{Account: *account, Entries: entries, Total: total, Page: page, Limit: limit, Policy: policy}, nil
+	return &WalletSummary{WalletMode: "internal", Account: *account, Entries: entries, Total: total, Page: page, Limit: limit, Policy: policy}, nil
 }
 
 func (s *Service) RedeemCredits(user *model.User, code string, redeemedIP string) (*model.CreditAccount, error) {
@@ -163,6 +177,9 @@ func (s *Service) RedeemCredits(user *model.User, code string, redeemedIP string
 }
 
 func (s *Service) AdminCreateRedeemBatch(actor *model.User, req CreateRedeemBatchRequest) (*CreateRedeemBatchResult, error) {
+	if err := s.repo.RequireInternalWallet(); err != nil {
+		return nil, err
+	}
 	if err := s.RequireAdmin(actor); err != nil {
 		return nil, err
 	}
@@ -499,6 +516,10 @@ func (s *Service) newLogicalModelBillingOrder(userID string, task *model.Task, i
 	}
 	quantity := int64(1)
 	tokenEstimate := estimateTaskBillingTokens(input, capability)
+	tokenEstimate, err = s.walletTokenEstimate(tokenEstimate, channelModel, logicalModel.BillingMode)
+	if err != nil {
+		return nil, err
+	}
 	amount := int64(0)
 	switch logicalModel.BillingMode {
 	case "fixed_request":
@@ -543,8 +564,9 @@ func (s *Service) newLogicalModelBillingOrder(userID string, task *model.Task, i
 		UnitPriceMicrocredits: logicalModel.UnitPriceMicrocredits, MultiplierBasisPoints: 10_000, Quantity: quantity, AmountMicrocredits: amount,
 		ReservedAmountMicrocredits: amount, InputTokenPriceMicrocredits: logicalModel.InputPriceMicrocredits,
 		OutputTokenPriceMicrocredits: logicalModel.OutputPriceMicrocredits, CachedTokenPriceMicrocredits: logicalModel.CachedPriceMicrocredits,
-		VideoFormulaTokens: videoFormulaTokens,
-		Status:             model.BillingStatusReserved,
+		VideoFormulaTokens:     videoFormulaTokens,
+		WalletOutputTokenLimit: tokenEstimate.ExplicitOutputLimit,
+		Status:                 model.BillingStatusReserved,
 	}
 	intent := ModelRequestIntentFromTaskInput(input, task.Type, task.Operation)
 	priceTierID, _ := config["priceTierId"].(string)
@@ -553,7 +575,7 @@ func (s *Service) newLogicalModelBillingOrder(userID string, task *model.Task, i
 		return nil, err
 	}
 	snapshotCreditCost(order, costTier, requestedBillingQuantity(capability, config), tokenEstimate)
-	return order, nil
+	return s.prepareWalletQuote(order)
 }
 
 func (s *Service) ReserveProxyBilling(userID string, channelID string, modelKey string, capability string, scene string, idempotencyKey string, quantity int64) (*model.BillingOrder, error) {
@@ -566,7 +588,21 @@ func (s *Service) ReserveProxyBillingWithBody(userID string, channelID string, m
 		return nil, err
 	}
 	if !enabled {
-		return nil, nil
+		cfg, readErr := s.repo.SharedWalletSettings()
+		if readErr != nil {
+			return nil, readErr
+		}
+		if cfg.Mode != "internal" {
+			return nil, BadAuthRequest("钱包模式已变化，请重新提交")
+		}
+		if idempotencyKey == "" {
+			idempotencyKey = newID()
+		}
+		order := &model.BillingOrder{ID: newID(), UserID: userID, IdempotencyKey: "proxy:" + idempotencyKey, ChannelID: channelID, Model: modelKey, Capability: capability, Scene: scene, BillingMode: "fixed_request", Status: model.BillingStatusReserved, WalletMode: cfg.Mode, WalletVersion: cfg.Version}
+		if reserveErr := s.repo.ReserveBillingOrder(order); reserveErr != nil {
+			return nil, reserveErr
+		}
+		return order, nil
 	}
 	if strings.TrimSpace(idempotencyKey) == "" {
 		idempotencyKey = newID()
@@ -602,6 +638,10 @@ func (s *Service) newBillingOrderWithPriceTier(userID string, taskID string, ide
 	}
 	if tier == nil {
 		return nil, BadAuthRequest("当前模型尚未配置所选规格的用户积分价格")
+	}
+	tokenEstimate, err = s.walletTokenEstimate(tokenEstimate, item, tier.BillingMode)
+	if err != nil {
+		return nil, err
 	}
 	quantity := int64(1)
 	amount := int64(0)
@@ -662,11 +702,12 @@ func (s *Service) newBillingOrderWithPriceTier(userID string, taskID string, ide
 		UnitPriceMicrocredits: tier.UnitPriceMicrocredits, MultiplierBasisPoints: multiplierBPS, Quantity: quantity, AmountMicrocredits: amount,
 		ReservedAmountMicrocredits: amount, InputTokenPriceMicrocredits: tier.InputTokenPriceMicrocredits,
 		OutputTokenPriceMicrocredits: tier.OutputTokenPriceMicrocredits, CachedTokenPriceMicrocredits: tier.CachedTokenPriceMicrocredits,
-		VideoFormulaTokens: videoFormulaTokens,
-		Status:             model.BillingStatusReserved,
+		VideoFormulaTokens:     videoFormulaTokens,
+		WalletOutputTokenLimit: tokenEstimate.ExplicitOutputLimit,
+		Status:                 model.BillingStatusReserved,
 	}
 	snapshotCreditCost(order, tier, requestedQuantity, tokenEstimate)
-	return order, nil
+	return s.prepareWalletQuote(order)
 }
 
 func (s *Service) channelModelPriceTierForBilling(channelModel model.ChannelModel, priceTierID string, capability string, intents ...ModelRequestIntent) (*model.ChannelModelPriceTier, error) {
@@ -709,7 +750,19 @@ func (s *Service) channelModelPriceTierForBilling(channelModel model.ChannelMode
 
 func estimateTaskTokens(input map[string]any) tokenBillingEstimate {
 	encoded, _ := json.Marshal(input)
-	return tokenBillingEstimate{InputTokens: estimatedTokens(encoded), OutputTokens: maxOutputTokens(input)}
+	var limit int64
+	if options, ok := input["textOptions"].(map[string]any); ok {
+		limit, _ = strconv.ParseInt(fmt.Sprint(options["maxOutputTokens"]), 10, 64)
+	}
+	invalid := walletMultipleOutputs(input)
+	if requests, ok := input["agentRequests"].(map[string]any); ok {
+		for _, raw := range requests {
+			if body, ok := raw.(map[string]any); ok && walletMultipleOutputs(body) {
+				invalid = true
+			}
+		}
+	}
+	return tokenBillingEstimate{InputTokens: estimatedTokens(encoded), OutputTokens: maxOutputTokens(input), ExplicitOutputLimit: limit, InvalidMultiplicity: invalid}
 }
 
 func estimateTaskBillingTokens(input map[string]any, capability string) tokenBillingEstimate {
@@ -722,7 +775,16 @@ func estimateTaskBillingTokens(input map[string]any, capability string) tokenBil
 func estimateProxyTokens(body []byte) tokenBillingEstimate {
 	var payload map[string]any
 	_ = json.Unmarshal(body, &payload)
-	return tokenBillingEstimate{InputTokens: estimatedTokens(body), OutputTokens: maxOutputTokens(payload)}
+	limit := int64(0)
+	limits := map[string]int64{}
+	for _, key := range []string{"max_tokens", "max_output_tokens", "max_completion_tokens"} {
+		if raw, ok := payload[key]; ok {
+			value, _ := strconv.ParseInt(fmt.Sprint(raw), 10, 64)
+			limits[key] = value
+			limit = value
+		}
+	}
+	return tokenBillingEstimate{InputTokens: estimatedTokens(body), OutputTokens: maxOutputTokens(payload), ExplicitOutputLimit: limit, Proxy: true, ProxyLimits: limits, InvalidMultiplicity: walletMultipleOutputs(payload)}
 }
 
 func estimatedTokens(value []byte) int64 {
@@ -757,8 +819,12 @@ func tokenEstimateAmount(item *model.ChannelModel, estimate tokenBillingEstimate
 	if item == nil || estimate.InputTokens < 0 || estimate.OutputTokens <= 0 || multiplierBPS <= 0 {
 		return 0, errors.New("Token 计费参数无效")
 	}
+	inputPrice := item.InputTokenPriceMicrocredits
+	if estimate.ExternalBudget {
+		inputPrice = max(inputPrice, item.CachedTokenPriceMicrocredits)
+	}
 	amount, err := kernel.TokenBillingAmount(multiplierBPS,
-		kernel.TokenBillingTerm{Tokens: estimate.InputTokens, PriceMicrocredits: item.InputTokenPriceMicrocredits},
+		kernel.TokenBillingTerm{Tokens: estimate.InputTokens, PriceMicrocredits: inputPrice},
 		kernel.TokenBillingTerm{Tokens: estimate.OutputTokens, PriceMicrocredits: item.OutputTokenPriceMicrocredits},
 	)
 	if errors.Is(err, kernel.ErrTokenBillingOverflow) {

@@ -33,13 +33,21 @@ type CreditLedgerEntry struct {
 }
 
 type BillingOrder struct {
-	BillingCostSnapshot `json:"-" gorm:"embedded"`
-	ID                  string `json:"id" gorm:"primaryKey;size:36"`
-	UserID              string `json:"userId" gorm:"size:36;index;uniqueIndex:idx_billing_user_idempotency,priority:1"`
-	IdempotencyKey      string `json:"idempotencyKey" gorm:"size:160;uniqueIndex:idx_billing_user_idempotency,priority:2"`
-	TaskID              string `json:"taskId,omitempty" gorm:"index;size:36"`
-	ChannelID           string `json:"channelId" gorm:"index;size:36"`
-	ChannelModelID      string `json:"channelModelId" gorm:"index;size:36"`
+	WalletMode             string     `json:"walletMode" gorm:"size:16;index"`
+	WalletVersion          int64      `json:"walletVersion"`
+	WalletState            string     `json:"walletState,omitempty" gorm:"size:20;index"`
+	WalletMemberID         int64      `json:"-"`
+	WalletOutputTokenLimit int64      `json:"-"`
+	WalletConfigJSON       string     `json:"-" gorm:"type:text"`
+	WalletLockToken        string     `json:"-" gorm:"size:36"`
+	WalletLockUntil        *time.Time `json:"-"`
+	BillingCostSnapshot    `json:"-" gorm:"embedded"`
+	ID                     string `json:"id" gorm:"primaryKey;size:36"`
+	UserID                 string `json:"userId" gorm:"size:36;index;uniqueIndex:idx_billing_user_idempotency,priority:1"`
+	IdempotencyKey         string `json:"idempotencyKey" gorm:"size:160;uniqueIndex:idx_billing_user_idempotency,priority:2"`
+	TaskID                 string `json:"taskId,omitempty" gorm:"index;size:36"`
+	ChannelID              string `json:"channelId" gorm:"index;size:36"`
+	ChannelModelID         string `json:"channelModelId" gorm:"index;size:36"`
 	// PriceTierID/Version 记录任务实际命中的规格档；金额字段仍是不可变结算快照。
 	PriceTierID                string `json:"priceTierId,omitempty" gorm:"index;size:36"`
 	PriceTierVersion           int64  `json:"priceTierVersion"`

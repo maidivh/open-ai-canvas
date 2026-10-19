@@ -95,6 +95,10 @@ func (s *Service) QuoteLogicalModel(logicalModelID string, intent ModelRequestIn
 		quantity = 1
 	}
 	tokenEstimate := estimateTaskBillingTokens(input, capability)
+	tokenEstimate, err = s.walletTokenEstimate(tokenEstimate, &routed.ChannelModel, routed.LogicalModel.BillingMode)
+	if err != nil {
+		return nil, err
+	}
 
 	if routed.LogicalModel.PricePolicy == "channel" {
 		priceTierID := ""
@@ -143,6 +147,10 @@ func (s *Service) QuoteLogicalModel(logicalModelID string, intent ModelRequestIn
 	}
 	if amount < 0 {
 		return nil, BadAuthRequest("当前模型尚未配置有效的用户价格")
+	}
+	amount, _, err = s.walletQuoteAmount(amount)
+	if err != nil {
+		return nil, err
 	}
 	quote := &LogicalModelQuote{
 		LogicalModelID:     routed.LogicalModel.ID,

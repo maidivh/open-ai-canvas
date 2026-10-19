@@ -24,6 +24,9 @@ func (r *Repository) ReserveBillingOrder(order *model.BillingOrder) error {
 }
 
 func reserveBillingOrder(tx *gorm.DB, order *model.BillingOrder) error {
+	if external, err := prepareSharedWalletAdmission(tx, order); err != nil || external {
+		return err
+	}
 	if err := validateBillingChargeLimit(*order, order.AmountMicrocredits); err != nil {
 		return err
 	}

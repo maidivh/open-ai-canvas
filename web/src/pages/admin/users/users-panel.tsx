@@ -20,6 +20,7 @@ const allColumnKeys = userColumnOptions.map((item) => item.key);
 
 export default function UsersPanel({ onUserChanged }: { onUserChanged?: (user: LocalUser) => void }) {
     const actor = useUserStore((state) => state.user);
+    const externalWallet = useUserStore((state) => state.features.walletMode === "external");
     const { message, modal } = App.useApp();
     const { state, update } = useTableUrlState();
     const debouncedFilter = useDebouncedValue(state.filter);
@@ -114,11 +115,12 @@ export default function UsersPanel({ onUserChanged }: { onUserChanged?: (user: L
 
     const columns = useMemo(() => createUserColumns({
         actorId: actor?.id,
+        externalWallet,
         visibleColumns,
         onView: (user) => setDetailUserId(user.id),
         onEdit: (user) => { setCreateUserOpen(false); setEditingUser(user); },
         onToggleStatus: toggleStatus,
-    }), [actor?.id, toggleStatus, visibleColumns]);
+    }), [actor?.id, externalWallet, toggleStatus, visibleColumns]);
 
     const resetFilters = () => update({ filter: "", role: "all", status: "all", page: 1 });
 

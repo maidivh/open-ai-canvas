@@ -307,7 +307,7 @@ func (r *Repository) SwitchTaskLogicalRoute(taskID string, expectedRouteID strin
 		updates["cost_quantity"] = cost.CostQuantity
 		updates["cost_video_formula_tokens"] = cost.CostVideoFormulaTokens
 		if replacement != nil {
-			if replacement.UserID != order.UserID || replacement.TaskID != taskID || replacement.AmountMicrocredits <= 0 {
+			if replacement.UserID != order.UserID || replacement.TaskID != taskID || replacement.AmountMicrocredits < 0 || (replacement.AmountMicrocredits == 0 && order.WalletMode != "external") {
 				return ErrBillingStateConflict
 			}
 			// The new supplier price cannot expand the user's original authorization.
@@ -320,6 +320,15 @@ func (r *Repository) SwitchTaskLogicalRoute(taskID string, expectedRouteID strin
 				reserved = order.AmountMicrocredits
 			}
 			delta := replacement.AmountMicrocredits - reserved
+			if order.WalletMode == "external" {
+				if delta > 0 {
+					return ErrBillingChargeLimit
+				}
+				// Keep the remote reservation unchanged until final settlement.
+				// Route fallback must never read or change the independent local wallet.
+				delta = 0
+				updates["wallet_output_token_limit"] = replacement.WalletOutputTokenLimit
+			}
 			accountUpdates := map[string]any{"version": gorm.Expr("version + 1"), "updated_at": now}
 			accountQuery := tx.Model(&model.CreditAccount{}).Where("user_id = ?", order.UserID)
 			if delta > 0 {
@@ -369,7 +378,9 @@ func (r *Repository) SwitchTaskLogicalRoute(taskID string, expectedRouteID strin
 			updates["multiplier_basis_points"] = replacement.MultiplierBasisPoints
 			updates["quantity"] = replacement.Quantity
 			updates["amount_microcredits"] = replacement.AmountMicrocredits
-			updates["reserved_amount_microcredits"] = replacement.AmountMicrocredits
+			if order.WalletMode != "external" {
+				updates["reserved_amount_microcredits"] = replacement.AmountMicrocredits
+			}
 			updates["input_token_price_microcredits"] = replacement.InputTokenPriceMicrocredits
 			updates["output_token_price_microcredits"] = replacement.OutputTokenPriceMicrocredits
 			updates["cached_token_price_microcredits"] = replacement.CachedTokenPriceMicrocredits

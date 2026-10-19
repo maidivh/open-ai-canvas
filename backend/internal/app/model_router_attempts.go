@@ -282,6 +282,21 @@ func (s *Service) switchTaskToNextRoute(task *model.Task, attempts []model.Route
 		replacement.Model = logicalModel.Code
 	}
 	previousRouteID := task.RouteID
+	if logicalModel.PricePolicy == "unified" && task.BillingOrderID != "" {
+		original, lookupErr := s.repo.BillingOrder(task.BillingOrderID)
+		if lookupErr != nil {
+			return nil, lookupErr
+		}
+		if original.WalletMode == "external" {
+			nextTask := *task
+			nextTask.RouteID = selected.Route.ID
+			nextTask.ChannelModelID = selected.ChannelModel.ID
+			replacement, err = s.newLogicalModelBillingOrder(task.UserID, &nextTask, nextInput)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 	var costOrder model.BillingOrder
 	if replacement != nil {
 		costOrder.BillingCostSnapshot = replacement.BillingCostSnapshot

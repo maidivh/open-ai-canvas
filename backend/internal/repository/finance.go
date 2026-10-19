@@ -27,6 +27,17 @@ func (r *Repository) GrantCreditsOnce(userID string, entryType model.CreditLedge
 	var account model.CreditAccount
 	granted := false
 	err := r.db.Transaction(func(tx *gorm.DB) error {
+		cfg, err := lockSharedWallet(tx)
+		if err != nil {
+			return err
+		}
+		if cfg.Mode == "external" {
+			if entryType != model.CreditLedgerSignupBonus {
+				return errors.New("外部钱包模式不支持本地赠分")
+			}
+			amount = 0
+			note = "外部钱包注册：不发放本地赠分"
+		}
 		account = model.CreditAccount{UserID: userID}
 		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&account).Error; err != nil {
 			return err
@@ -39,7 +50,7 @@ func (r *Repository) GrantCreditsOnce(userID string, entryType model.CreditLedge
 		if created.RowsAffected == 0 {
 			return tx.First(&account, "user_id = ?", userID).Error
 		}
-		granted = true
+		granted = amount > 0
 		if err := tx.Model(&model.CreditAccount{}).Where("user_id = ?", userID).Updates(map[string]any{
 			"available_microcredits": gorm.Expr("available_microcredits + ?", amount),
 			"version":                gorm.Expr("version + 1"),
@@ -87,7 +98,7 @@ func (r *Repository) CreditAccounts(userIDs []string) ([]model.CreditAccount, er
 func (r *Repository) CreditLedger(userID string, entryType string, limit int, offset int) ([]model.CreditLedgerEntry, int64, error) {
 	var items []model.CreditLedgerEntry
 	var total int64
-	query := r.db.Model(&model.CreditLedgerEntry{}).Where("user_id = ? AND type <> ?", userID, model.CreditLedgerReserve)
+	query := r.db.Model(&model.CreditLedgerEntry{}).Where("user_id = ? AND type <> ? AND (reference_key IS NULL OR reference_key NOT LIKE ?)", userID, model.CreditLedgerReserve, "wallet:%")
 	switch entryType {
 	case "income":
 		query = query.Where("type IN ?", []model.CreditLedgerType{model.CreditLedgerRedeem, model.CreditLedgerAdminGrant, model.CreditLedgerAdminAdjust, model.CreditLedgerSignupBonus, model.CreditLedgerCheckinBonus})
@@ -118,6 +129,9 @@ func (r *Repository) CreditLedgerReferenceExists(referenceKey string) (bool, err
 func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *model.BillingOrder, activeTaskLimit int) error {
 	return r.Transaction(func(repo *Repository) error {
 		tx := repo.db
+		if _, err := lockSharedWallet(tx); err != nil {
+			return err
+		}
 		if err := New(tx).requireExclusiveCanvasAgent(task); err != nil {
 			return err
 		}
@@ -143,6 +157,9 @@ func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *mo
 func (r *Repository) CreateTaskWithActiveLimit(task *model.Task, activeTaskLimit int) error {
 	return r.Transaction(func(repo *Repository) error {
 		tx := repo.db
+		if err := requireNonbillableTaskAdmission(tx, task); err != nil {
+			return err
+		}
 		if err := New(tx).requireExclusiveCanvasAgent(task); err != nil {
 			return err
 		}
@@ -166,6 +183,14 @@ func (r *Repository) RetryTaskWithBilling(userID string, prepared *model.Task, o
 	var task model.Task
 	taskID := prepared.ID
 	err := r.db.Transaction(func(tx *gorm.DB) error {
+		if _, err := lockSharedWallet(tx); err != nil {
+			return err
+		}
+		if order == nil {
+			if err := requireNonbillableTaskAdmission(tx, prepared); err != nil {
+				return err
+			}
+		}
 		if err := enforceActiveTaskLimit(tx, userID, activeTaskLimit); err != nil {
 			return err
 		}

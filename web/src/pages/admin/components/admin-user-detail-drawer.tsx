@@ -8,8 +8,10 @@ import { IconButton } from "@/pages/admin/ui/controls";
 import { AdminDataTable, AdminEmpty, AdminStatusBadge, AdminTableEmpty, PaginationBar, type AdminStatusTone } from "./admin-ui";
 import { getAdminUserDetail, listAdminUserAuditEvents, listAdminUserLedger, listAdminUserTasks, type AdminAuditEvent, type AdminUserDetail, type AdminUserTask } from "@/services/api/auth";
 import type { CreditLedgerEntry } from "@/services/api/wallet";
+import { useUserStore } from "@/stores/use-user-store";
 
 export function AdminUserDetailDrawer({ userId, onClose, previousUserId, nextUserId, onNavigate }: { userId: string | null; onClose: () => void; previousUserId?: string; nextUserId?: string; onNavigate?: (userId: string) => void }) {
+    const external = useUserStore((state) => state.features.walletMode === "external");
     const { message } = App.useApp();
     const [detail, setDetail] = useState<AdminUserDetail | null>(null);
     const [ledger, setLedger] = useState<CreditLedgerEntry[]>([]);
@@ -121,7 +123,7 @@ export function AdminUserDetailDrawer({ userId, onClose, previousUserId, nextUse
                                             { key: "email", label: "邮箱", children: detail.user.email || "未填写" },
                                             { key: "role", label: "角色", children: detail.user.role === "admin" ? "管理员" : "普通用户" },
                                             { key: "status", label: "状态", children: <AdminStatusBadge label={detail.user.status === "active" ? "启用" : "停用"} tone={detail.user.status === "active" ? "success" : "neutral"} /> },
-                                            { key: "available", label: "可用积分", children: formatCredits(detail.account.availableMicrocredits) },
+                                            { key: "available", label: external ? "保留的内部积分" : "可用积分", children: formatCredits(detail.account.availableMicrocredits) },
                                             { key: "recharge", label: "累计充值积分", children: formatCredits(detail.counts.rechargeMicrocredits) },
                                             { key: "checkin", label: "累计签到积分", children: formatCredits(detail.counts.checkinMicrocredits) },
                                             { key: "reserved", label: "冻结积分", children: formatCredits(detail.account.reservedMicrocredits) },

@@ -1,10 +1,15 @@
-import { Button } from "antd";
+import { Alert, App, Button } from "antd";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Settings2, UserRoundCog } from "lucide-react";
 import { lazy, useState } from "react";
 
 import { useAdminContext } from "./admin-context";
 import { AdminPageFrame } from "./components/admin-shell";
 import { readAnnouncementPendingReview } from "./components/admin-announcement-safety";
+import { WalletSettingsDrawer } from "./components/wallet-settings-drawer";
+import { getAdminWalletSettings, type WalletSettings } from "@/services/api/wallet";
+import { getFeatureAvailability, invalidateAuthSessionCache } from "@/services/api/auth";
+import { useUserStore } from "@/stores/use-user-store";
 
 const AnalyticsPanel = lazy(() => import("./components/analytics-panel"));
 const AdminAnnouncementsPanel = lazy(() => import("./components/admin-announcements-panel"));
@@ -77,23 +82,41 @@ export function BannerAnnouncementsPage() {
 
 export function CreditOperationsPage() {
     const { references } = useAdminContext();
+    const { message } = App.useApp();
+    const queryClient = useQueryClient();
+    const settings = useQuery({ queryKey: ["admin-wallet-settings"], queryFn: getAdminWalletSettings, refetchOnWindowFocus: false });
+    const [walletSettingsOpen, setWalletSettingsOpen] = useState(false);
     const [activeOperation, setActiveOperation] = useState<"policy" | "adjustment" | null>(null);
+    const saved = (next: WalletSettings) => {
+        queryClient.setQueryData(["admin-wallet-settings"], next);
+        const currentFeatures = useUserStore.getState().features;
+        useUserStore.getState().setFeatures({ ...currentFeatures, walletMode: next.mode, rechargeUrl: next.rechargeUrl, creditsEnabled: next.mode === "external" ? true : currentFeatures.creditsEnabled });
+        invalidateAuthSessionCache();
+        void queryClient.invalidateQueries({ queryKey: ["wallet-balance"] });
+        void getFeatureAvailability().then(({ features }) => useUserStore.getState().setFeatures(features)).catch(() => message.warning("扣费设置已保存，功能状态刷新失败，请刷新页面"));
+        if (next.mode === "external") setActiveOperation(null);
+    };
     return (
         <AdminPageFrame
             title="积分运营"
             description="异常计费核对、积分策略与人工调账"
             actions={
                 <>
+                    <Button icon={<Settings2 className="size-4" />} onClick={() => setWalletSettingsOpen(true)}>
+                        扣费模式{settings.data ? ` · ${settings.data.mode === "external" ? "小洞AI" : "内部"}` : ""}
+                    </Button>
                     <Button icon={<Settings2 className="size-4" />} onClick={() => setActiveOperation("policy")}>
                         积分策略
                     </Button>
-                    <Button type="primary" icon={<UserRoundCog className="size-4" />} onClick={() => setActiveOperation("adjustment")}>
+                    <Button type="primary" disabled={settings.isFetching || settings.isError || settings.data?.mode !== "internal"} title={settings.data?.mode === "external" ? "外部积分请在小洞AI调整" : undefined} icon={<UserRoundCog className="size-4" />} onClick={() => setActiveOperation("adjustment")}>
                         人工调账
                     </Button>
                 </>
             }
         >
+            {settings.isError ? <Alert type="error" showIcon title="无法确认扣费模式，人工调账暂不可用" action={<Button onClick={() => void settings.refetch()}>重试</Button>} /> : settings.data?.mode === "external" ? <Alert type="info" showIcon title="当前使用小洞AI积分" description="余额与充值在小洞AI管理。注册与签到赠分配置保留，仅内部模式生效。历史账单按原钱包结算和退款。" /> : null}
             <CreditOperationsPanel users={references.users} activeOperation={activeOperation} onOperationChange={setActiveOperation} />
+            <WalletSettingsDrawer open={walletSettingsOpen} onClose={() => setWalletSettingsOpen(false)} settings={settings.data} loading={settings.isFetching} error={settings.error} onReload={() => void settings.refetch()} onSaved={saved} />
         </AdminPageFrame>
     );
 }

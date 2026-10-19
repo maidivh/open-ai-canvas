@@ -122,6 +122,9 @@ type AdminPaymentOrderView struct {
 }
 
 func (s *Service) CreatePaymentOrder(ctx context.Context, actor *model.User, request CreatePaymentOrderRequest) (*PaymentOrderView, error) {
+	if err := s.repo.RequireInternalWallet(); err != nil {
+		return nil, err
+	}
 	if actor == nil {
 		return nil, Unauthorized("请先登录")
 	}

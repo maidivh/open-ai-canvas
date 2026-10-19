@@ -10,6 +10,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { PaginationBar } from "@/pages/admin/components/admin-ui";
 import { formatCredits } from "@/constant/credits";
+import { useUserStore } from "@/stores/use-user-store";
 import {
     closeAdminPaymentOrder,
     exportAdminPaymentOrders,
@@ -82,6 +83,7 @@ const reconciliationResult: Record<string, { label: string; tone: "neutral" | "s
 };
 
 export default function AdminPaymentsPage() {
+    const external = useUserStore((state) => state.features.walletMode === "external");
     const { message, modal } = App.useApp();
     const [activeTab, setActiveTab] = useState("providers");
     const [providers, setProviders] = useState<AdminPaymentProvider[]>([]);
@@ -645,6 +647,7 @@ export default function AdminPaymentsPage() {
             }
             scroll
         >
+            {external ? <Callout className="my-4" tone="info" title="当前使用小洞AI充值">这里保留 Canvas 内部支付配置与历史订单。旧订单支付完成后仍到账内部钱包，切回内部模式后可使用。</Callout> : null}
             <Callout className="my-4" tone="info" title="平台不提供支付退款">
                 管理端仅提供查单、关单和对账。关单前始终先向渠道查单；对账发现已支付未入账订单时会幂等补发积分。
             </Callout>

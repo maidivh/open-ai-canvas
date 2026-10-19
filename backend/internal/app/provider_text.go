@@ -35,6 +35,13 @@ func executeProtocolCreateRequest(ctx context.Context, input canvasGenerationInp
 	if wire == string(model.ChannelInterfaceOpenAIResponse) {
 		wire = "responses"
 	}
+	if input.EnforceWalletOutputLimit {
+		body := protocolBodyObject(spec.Body)
+		if err := enforceWalletTextBody(body, input, wire); err != nil {
+			return nil, nil, err
+		}
+		spec.Body = body
+	}
 	if input.Mode != "text" || !input.StreamText || (wire != "chat-completion" && wire != "responses" && wire != "claude-api") {
 		data, err := executeProtocolRequest(ctx, input.Config, spec)
 		return data, nil, err

@@ -1,0 +1,42 @@
+---
+title: 共享钱包
+description: 小洞AI统一积分的配置、授权边界和故障恢复
+---
+
+# 共享钱包
+
+部署前执行 Schema 58 迁移。默认 internal，原本地余额、支付、兑换和奖励保留。external 读取小洞AI会员钱包；充值在小洞AI进行，Canvas 不复制余额、不回退花本地积分。
+
+## 配置与身份
+
+管理员 GET/PUT `/api/admin/wallet-settings`：`mode`、`baseUrl`、`clientId`、`siteId`、`issuer`、`rechargeUrl`、`version`；写入可带 `clientSecret`，空值保留密钥。读取仅返回 `secretConfigured`。密钥使用系统设置加密器保存，审计不记录密钥。保存使用版本比较；启用前必须已有该 issuer/site 的 Cloooud SSO 会员，服务端以该会员执行只读余额探测。
+
+SSO 仅绑定身份。外部会员由 `cloooud` identity 的 issuer 摘要、站点 ID、会员 ID 解析，不按昵称、邮箱猜测。`GET /api/wallet` 增加 `walletMode`、`rechargeUrl`，每次请求远端余额；远端失败返回错误。公共 feature flags 在 external 强制 `creditsEnabled=true`，同时附带钱包模式。
+
+外部模式禁止本地支付建单、签到、兑换、批次创建和管理员调账；注册奖励记录唯一的零金额跳过标记，登录不中断，切回内部后不补发。停用兑换码和查询历史记录仍可用于管理旧数据。
+
+## 计费与恢复
+
+每单按 `ceil(microcredits / 1000000)` 换算整数积分，报价与预扣一致；批量按各子任务分别取整。任务入队先保存账单来源、配置版本、加密凭据快照和 reserve 操作；`walletState=pending` 表示尚未确认预扣。worker 及同步代理在调用模型前确认远端预扣。远端余额不足直接失败，不调用模型。
+
+任务成功以实际金额 settle；失败 refund；已退款任务恢复成功走原钱包 restore。更便宜的备用线路保留原预扣总额，最终结算退差价；更贵且超过原授权的线路不自动启用。内部免费同步代理也记录零价账单，避免执行期间切换模式。
+
+同一操作重试保持 operation ID、金额和来源不变，每次重新生成签名 nonce。未知结果保持 pending/uncertain；自动对账每 30 秒处理已尝试的预扣及待结算/退款，不提前扣除未开始的排队任务。管理员可 POST `/api/admin/wallet-reconcile` 触发同一对账。状态查询不能替代操作收据，查询后仍重放原操作。成功收据余额是历史快照，展示余额必须重新查 balance。
+
+恢复扣费明确因余额不足被拒绝时保留 refunded，充值后可重新恢复同一操作。超时不等同于失败退款。实际费用超过原授权进入 uncertain，不自动补扣或负债。一次账单仅允许一次 reserve/settle/refund/restore，已恢复结算后不能重放旧 refund。
+
+## 外部模式的可执行授权边界
+
+- 固定价格文本、图片、视频、音频，以及按确定输出秒数计价的视频可使用。
+- 文本 Token 仅支持 `chat-completion`、`openai-response`、`claude-api`。模型必须显式声明上下文窗口与输出上限，预扣按整个上下文窗口的输入预算加输出上限保守报价，输入/缓存使用较高单价。冻结的输出上限会应用到 provider 请求；Agent 策略可以进一步缩小它。
+- 同步代理必须提供该协议唯一有效的 `max_tokens` 或 `max_output_tokens`，缺少、冲突或协议不匹配均拒绝。
+- 视频 Token 仅允许尺寸与时长确定、无参考视频的请求。参考视频时长在现有报价阶段尚不能从可信资源统一验证，暂拒绝此类外部计费。
+- 按秒音频没有可执行的输出时长上限，外部模式暂拒绝；请使用固定价格音频。自定义文本协议无法证明输出上限映射时也拒绝。
+
+这些拒绝发生在预扣和上游请求之前。内部钱包维持现有计费行为。
+
+## 本地验证
+
+`LC_ALL=C LANG=C TMPDIR=/private/tmp go test -p 1 ./... -count=1`。本次稳定源码的完整后端测试通过，未使用排除测试过滤器；显式locale解决本机Redis子进程无法启动的问题。专项测试名以 `TestSharedWallet` 开头，覆盖幂等超时、原来源恢复、预扣不足、切换、奖励、整分报价和备用线路。
+
+可选跨语言测试 `TestSharedWalletPHPContract` 需设置 `CANVAS_WALLET_PHP_FIXTURE` 为 ai_cloooud 的 `tests/fixtures/shared_wallet_http_router.php`，`SHARED_WALLET_PHP` 为 PHP 8 可执行文件；使用临时 SQLite 和本地 HTTP，不读取生产账户或调用真实扣费。

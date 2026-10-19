@@ -180,6 +180,7 @@ export default function FeatureAvailabilityPanel() {
 
     const requestFeatureChange = (key: FeatureKey, enabled: boolean) => {
         if (!savedFeatures || saving || savedFeatures[key] === enabled) return;
+        if (key === "creditsEnabled" && savedFeatures.walletMode === "external") return;
         if (key === "creditsEnabled" && !enabled) {
             modal.confirm({
                 title: "关闭用户积分功能？",
@@ -325,6 +326,7 @@ function FeatureSettingRow({ row, saved, draft, saving, onChange, step }: { row:
     const changed = saved[row.key] !== draft[row.key];
     const dependencyDisabled = Boolean(row.dependsOn && !draft[row.dependsOn]);
     const enabled = effectiveFeatureValue(draft, row.key);
+    const externalBilling = row.key === "creditsEnabled" && draft.walletMode === "external";
 
     return (
         <article className={cn("admin-feature-board-row", changed && "is-dirty", !enabled && "is-off", row.dependsOn && "is-dependent")}>
@@ -333,13 +335,13 @@ function FeatureSettingRow({ row, saved, draft, saving, onChange, step }: { row:
                 <span className="admin-feature-board-row-name">
                     {step ? <small>第 {step} 步</small> : null}
                     <strong>{row.title}</strong>
-                    <span>{row.description}</span>
+                    <span>{externalBilling ? "外部模式始终使用小洞AI计费；请在积分运营中切换钱包来源。" : row.description}</span>
                 </span>
                 {changed ? <span className="admin-feature-board-row-dirty">待保存</span> : null}
             </div>
             <div className="admin-feature-board-row-control">
                 <span>{dependencyDisabled ? "依赖未开启" : enabled ? "已开放" : "已关闭"}</span>
-                <Switch checked={draft[row.key]} disabled={saving || dependencyDisabled} onChange={(checked) => onChange(row.key, checked)} aria-label={`设置${row.title}，切换后立即保存`} />
+                <Switch checked={externalBilling || draft[row.key]} disabled={saving || dependencyDisabled || externalBilling} onChange={(checked) => onChange(row.key, checked)} aria-label={`设置${row.title}，切换后立即保存`} />
             </div>
         </article>
     );
@@ -405,6 +407,8 @@ function parseFeatureAvailability(value: unknown): FeatureAvailability {
         shortDramaEnabled: record.shortDramaEnabled as boolean,
         taskCenterEnabled: record.taskCenterEnabled as boolean,
         creditsEnabled: record.creditsEnabled as boolean,
+        walletMode: record.walletMode === "external" ? "external" : "internal",
+        rechargeUrl: typeof record.rechargeUrl === "string" ? record.rechargeUrl : undefined,
         customChannelsEnabled: record.customChannelsEnabled as boolean,
         inspirationSourcesVisible: record.inspirationSourcesVisible as boolean,
         imageWorkbenchEnabled: record.imageWorkbenchEnabled as boolean,

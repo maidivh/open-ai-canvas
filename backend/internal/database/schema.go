@@ -51,6 +51,7 @@ func Models() []any {
 		&model.CreditAccount{},
 		&model.CreditLedgerEntry{},
 		&model.BillingOrder{},
+		&model.WalletOperation{},
 		&model.TopupProduct{},
 		&model.PaymentProviderConfig{},
 		&model.PaymentOrder{},

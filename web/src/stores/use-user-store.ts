@@ -34,6 +34,8 @@ export type FeatureAvailability = {
     shortDramaEnabled: boolean;
     taskCenterEnabled: boolean;
     creditsEnabled: boolean;
+    walletMode?: "internal" | "external";
+    rechargeUrl?: string;
     customChannelsEnabled: boolean;
     frontendModelsEnabled: boolean;
     pluginCenterEnabled: boolean;

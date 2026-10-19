@@ -7,6 +7,7 @@ import { PaymentCheckoutCode } from "@/components/payment-checkout-code";
 import { AppModal } from "@/components/ui/product/app-modal";
 import { formatCredits } from "@/constant/credits";
 import { generationErrorMessage } from "@/lib/generation-error";
+import { getWalletAccess } from "@/lib/wallet-mode";
 import { closePaymentOrder, createPaymentOrder, getPaymentOrder, listPaymentProviders, listTopupProducts, queryPaymentOrder, refreshPaymentCheckout, type PaymentOrder, type PaymentProvider, type TopupProduct } from "@/services/api/payments";
 import { getWallet, redeemCredits, type CreditLedgerEntry, type WalletSummary } from "@/services/api/wallet";
 import { cn } from "@/lib/utils";
@@ -17,6 +18,7 @@ import { useUserStore } from "@/stores/use-user-store";
 type WalletModalTab = "topup" | "redeem" | "history";
 
 export function WorkspaceWalletHost() {
+    const userId = useUserStore((state) => state.user?.id);
     const creditsEnabled = useUserStore((state) => state.features.creditsEnabled);
     const { pathname, search } = useLocation();
     const navigate = useNavigate();
@@ -52,6 +54,7 @@ export function WorkspaceWalletHost() {
     if (!creditsEnabled) return null;
     return (
         <WorkspaceWalletModal
+            key={userId}
             open={open}
             pendingPaymentOrderId={pendingPaymentOrderId}
             paymentInvalid={paymentInvalid}
@@ -66,6 +69,8 @@ export function WorkspaceWalletHost() {
 
 export function WorkspaceWalletModal({ open, onClose, pendingPaymentOrderId, paymentInvalid }: { open: boolean; onClose: () => void; pendingPaymentOrderId?: string; paymentInvalid?: boolean }) {
     const { message } = App.useApp();
+    const features = useUserStore((state) => state.features);
+    const userId = useUserStore((state) => state.user?.id);
     const redeemPurchaseUrl = useAppearanceStore((state) => state.appearance.redeemPurchaseUrl);
     const [tab, setTab] = useState<WalletModalTab>("topup");
     const [wallet, setWallet] = useState<WalletSummary | null>(null);
@@ -87,6 +92,9 @@ export function WorkspaceWalletModal({ open, onClose, pendingPaymentOrderId, pay
     const idempotencyKey = useRef("");
     const completedOrderId = useRef("");
     const requestSequence = useRef(0);
+    const { walletMode, rechargeUrl, availableMicrocredits: available, localActionsAllowed } = getWalletAccess(wallet, features, Boolean(walletError));
+    const external = walletMode === "external";
+    const activeTab = external && tab === "redeem" ? "topup" : tab;
 
     const selectedProduct = useMemo(() => products.find((item) => item.id === selectedProductId), [products, selectedProductId]);
     const selectedProvider = useMemo(() => providers.find((item) => item.id === selectedProviderId), [providers, selectedProviderId]);
@@ -97,6 +105,7 @@ export function WorkspaceWalletModal({ open, onClose, pendingPaymentOrderId, pay
         setWalletError("");
         try {
             const result = await getWallet(targetPage, 20, "all");
+            if (result.account.userId !== userId) throw new Error("积分账户与当前用户不一致");
             if (sequence === requestSequence.current) setWallet(result);
         } catch (error) {
             if (sequence === requestSequence.current) setWalletError(error instanceof Error ? error.message : "读取积分账户失败");
@@ -108,18 +117,34 @@ export function WorkspaceWalletModal({ open, onClose, pendingPaymentOrderId, pay
     useEffect(() => {
         if (!open) return;
         setPage(1);
+        setWallet(null);
         void reloadWallet(1);
+        return () => { requestSequence.current += 1; };
+    }, [open, userId, features.walletMode]);
+
+    useEffect(() => {
+        if (!open || !localActionsAllowed) return;
+        let active = true;
         setPaymentsLoading(true);
         Promise.all([listTopupProducts(), listPaymentProviders()])
             .then(([productResult, providerResult]) => {
+                if (!active) return;
                 setProducts(productResult.products.filter((item) => item.enabled));
                 setProviders(providerResult.providers.filter((item) => item.enabled && item.pluginEnabled && item.configured));
                 setSelectedProductId((current) => current || productResult.products.find((item) => item.canPurchase)?.id || productResult.products.find((item) => item.enabled)?.id || "");
                 setSelectedProviderId((current) => current || providerResult.providers.find((item) => item.enabled && item.pluginEnabled && item.configured)?.id || "");
             })
-            .catch((error) => message.error(error instanceof Error ? error.message : "读取充值配置失败"))
-            .finally(() => setPaymentsLoading(false));
-    }, [open]);
+            .catch((error) => { if (active) message.error(error instanceof Error ? error.message : "读取充值配置失败"); })
+            .finally(() => { if (active) setPaymentsLoading(false); });
+        return () => { active = false; };
+    }, [open, localActionsAllowed]);
+
+    useEffect(() => {
+        if (!open || !external) return;
+        const refresh = () => { void reloadWallet(page); window.dispatchEvent(new CustomEvent("wallet:updated")); };
+        window.addEventListener("focus", refresh);
+        return () => window.removeEventListener("focus", refresh);
+    }, [open, external, page]);
 
     useEffect(() => {
         if (!open || !paymentInvalid) return;
@@ -164,6 +189,7 @@ export function WorkspaceWalletModal({ open, onClose, pendingPaymentOrderId, pay
     }, [open, pendingPaymentOrderId]);
 
     const redeem = async () => {
+        if (!localActionsAllowed) return;
         const normalized = code.trim().toLowerCase();
         if (normalized.length !== 32) {
             message.error("请输入完整的 32 位兑换码");
@@ -183,6 +209,7 @@ export function WorkspaceWalletModal({ open, onClose, pendingPaymentOrderId, pay
     };
 
     const startPayment = async () => {
+        if (!localActionsAllowed) return;
         if (!selectedProduct || !selectedProvider) {
             message.error("请选择充值商品和支付方式");
             return;
@@ -257,7 +284,6 @@ export function WorkspaceWalletModal({ open, onClose, pendingPaymentOrderId, pay
         }
     };
 
-    const available = wallet?.account.availableMicrocredits ?? 0;
     const totalPages = Math.max(1, Math.ceil((wallet?.total || 0) / 20));
 
     return (
@@ -270,32 +296,47 @@ export function WorkspaceWalletModal({ open, onClose, pendingPaymentOrderId, pay
                                 <Coins />
                                 积分中心
                             </span>
-                            <h2>充值、兑换与消费记录</h2>
-                            <p>为下一次创作补充积分，随时查看每一笔收支。</p>
+                            <h2>{external ? "小洞AI积分与消费记录" : "充值、兑换与消费记录"}</h2>
+                            <p>{external ? "与小洞AI共用积分，充值和消费均使用同一账户。" : "为下一次创作补充积分，随时查看每一笔收支。"}</p>
                         </div>
                         <div className="workspace-wallet-balance">
                             <span>可用积分</span>
-                            <strong>{wallet ? formatCredits(available, 6) : "--"}</strong>
-                            <small>冻结 {wallet ? formatCredits(wallet.account.reservedMicrocredits, 6) : "--"}</small>
+                            <strong>{available === null ? (walletError ? "暂不可用" : "--") : formatCredits(available, external ? 0 : 6)}</strong>
+                            <small>{external ? "来自小洞AI账户" : `冻结 ${available !== null && wallet ? formatCredits(wallet.account.reservedMicrocredits, 6) : "--"}`}</small>
                         </div>
                     </header>
 
                     <div className="workspace-wallet-tabs" role="tablist" aria-label="积分中心">
-                        <button type="button" role="tab" aria-selected={tab === "topup"} onClick={() => setTab("topup")}>
+                        <button type="button" role="tab" aria-selected={activeTab === "topup"} onClick={() => setTab("topup")}>
                             <WalletCards />
-                            充值
+                            {external ? "小洞AI充值" : "充值"}
                         </button>
-                        <button type="button" role="tab" aria-selected={tab === "redeem"} onClick={() => setTab("redeem")}>
+                        {localActionsAllowed ? <button type="button" role="tab" aria-selected={activeTab === "redeem"} onClick={() => setTab("redeem")}>
                             <TicketCheck />
                             兑换
-                        </button>
-                        <button type="button" role="tab" aria-selected={tab === "history"} onClick={() => setTab("history")}>
+                        </button> : null}
+                        <button type="button" role="tab" aria-selected={activeTab === "history"} onClick={() => setTab("history")}>
                             <History />
                             积分消耗历史
                         </button>
                     </div>
 
-                    {tab === "topup" ? (
+                    {external && activeTab === "topup" ? (
+                        <div className="workspace-wallet-content is-topup">
+                            <section className="workspace-wallet-section">
+                                <div className="workspace-wallet-section-heading"><div><h3>在小洞AI充值</h3><p>充值到账后返回此页刷新余额。外部计费按每笔账单向上取整，批量任务分别计费；原 Canvas 内部积分保留。</p></div><WalletCards /></div>
+                                {walletError ? <div className="workspace-wallet-inline-state is-error"><CircleAlert /><div><strong>余额暂不可用</strong><span>{walletError}</span></div></div> : null}
+                                <div className="workspace-wallet-provider-row">
+                                    {rechargeUrl ? <Button type="primary" size="large" href={rechargeUrl} target="_blank" rel="noopener noreferrer">前往小洞AI充值</Button> : <span>充值入口尚未配置，请联系管理员。</span>}
+                                    <Button icon={<RefreshCw />} loading={walletLoading} onClick={() => { void reloadWallet(page); window.dispatchEvent(new CustomEvent("wallet:updated")); }}>刷新余额</Button>
+                                </div>
+                            </section>
+                        </div>
+                    ) : walletError ? (
+                        <div className="workspace-wallet-content"><div className="workspace-wallet-inline-state is-error"><CircleAlert /><div><strong>积分账户暂不可用</strong><span>{walletError}</span></div><Button onClick={() => void reloadWallet(page)}>重试</Button></div></div>
+                    ) : !wallet ? (
+                        <div className="workspace-wallet-content"><Skeleton active paragraph={{ rows: 4 }} /></div>
+                    ) : activeTab === "topup" ? (
                         <div className="workspace-wallet-content is-topup">
                             <section className="workspace-wallet-section">
                                 <div className="workspace-wallet-section-heading">
@@ -375,7 +416,7 @@ export function WorkspaceWalletModal({ open, onClose, pendingPaymentOrderId, pay
                                 )}
                             </section>
                         </div>
-                    ) : tab === "redeem" ? (
+                    ) : activeTab === "redeem" ? (
                         <div className="workspace-wallet-content is-redeem">
                             <section className="workspace-wallet-section is-redeem">
                                 <div className="workspace-wallet-section-heading">
@@ -405,7 +446,7 @@ export function WorkspaceWalletModal({ open, onClose, pendingPaymentOrderId, pay
                             <div className="workspace-wallet-history-toolbar">
                                 <div>
                                     <h3>积分消耗历史</h3>
-                                    <p>包含充值、兑换、生成消费、冻结与退款。</p>
+                                    <p>{external ? "仅展示 Canvas 在小洞AI账户产生的消费与退款；完整账户流水请到小洞AI查看。" : "包含充值、兑换、生成消费、冻结与退款。"}</p>
                                 </div>
                                 <Button type="text" icon={<RefreshCw />} loading={walletLoading} onClick={() => void reloadWallet(page)}>
                                     刷新
@@ -426,14 +467,14 @@ export function WorkspaceWalletModal({ open, onClose, pendingPaymentOrderId, pay
                                 ) : wallet?.entries.length ? (
                                     <div className="workspace-wallet-ledger">
                                         {wallet.entries.map((entry) => (
-                                            <WalletLedgerRow key={entry.id} entry={entry} />
+                                            <WalletLedgerRow key={entry.id} entry={entry} external={external} />
                                         ))}
                                     </div>
                                 ) : (
                                     <div className="workspace-wallet-empty">
                                         <History />
                                         <strong>还没有积分记录</strong>
-                                        <span>完成充值、兑换或生成任务后，记录会显示在这里。</span>
+                                        <span>{external ? "使用小洞AI积分完成生成任务后，记录会显示在这里。" : "完成充值、兑换或生成任务后，记录会显示在这里。"}</span>
                                     </div>
                                 )}
                             </div>
@@ -494,6 +535,7 @@ export function WorkspaceWalletModal({ open, onClose, pendingPaymentOrderId, pay
                                 <span>请使用支付应用扫码完成支付</span>
                             </>
                         ) : null}
+                        {external ? <p>此订单仍到账 Canvas 内部钱包，切回内部模式后可使用。</p> : null}
                         <PaymentStatus order={paymentOrder} now={clock} />
                     </div>
                 ) : null}
@@ -502,7 +544,7 @@ export function WorkspaceWalletModal({ open, onClose, pendingPaymentOrderId, pay
     );
 }
 
-function WalletLedgerRow({ entry }: { entry: CreditLedgerEntry }) {
+function WalletLedgerRow({ entry, external }: { entry: CreditLedgerEntry; external: boolean }) {
     const positive = entry.amountMicrocredits > 0;
     const note = entry.note ? generationErrorMessage(entry.note) : "";
     const title = entry.type === "consume" ? "模型调用" : entry.type === "refund" ? "消费退款" : entry.type === "payment_topup" ? "在线充值" : entry.type === "redeem" ? "兑换码充值" : note || "积分调整";
@@ -510,7 +552,7 @@ function WalletLedgerRow({ entry }: { entry: CreditLedgerEntry }) {
         <article className="workspace-wallet-ledger-row">
             <span className={cn("workspace-wallet-ledger-icon", positive ? "is-income" : "is-consume")}>{positive ? <Coins /> : <CreditCard />}</span>
             <div>
-                <strong>{title}</strong>
+                <strong>{title}{external ? " · 小洞AI" : ""}</strong>
                 <span>{[entry.scene, entry.model, note].filter(Boolean).join(" · ") || "积分账户变动"}</span>
             </div>
             <time>{new Date(entry.createdAt).toLocaleString("zh-CN", { hour12: false })}</time>

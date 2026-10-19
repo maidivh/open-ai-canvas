@@ -10,7 +10,7 @@ import { canonicalGenerationMetadata, nodeGenerationPrompt } from "@/lib/canvas/
 import { PROMPT_EDITOR_VIEWPORT_MARGIN } from "@/lib/canvas/canvas-prompt-editor-size";
 import { CreditSymbol, requestCreditCost } from "@/constant/credits";
 import { canvasThemes } from "@/lib/canvas-theme";
-import { modelQuoteDescription, modelQuoteRequest } from "@/lib/model-pricing";
+import { modelQuoteCredits, modelQuoteDescription, modelQuoteRequest } from "@/lib/model-pricing";
 import { modelRequestOptions, defaultImageParamsForModel, type ModelRequirements } from "@/lib/model-selection";
 import { navigateToSettings } from "@/lib/settings-navigation";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
@@ -84,6 +84,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     const themeName = useActiveTheme();
     const theme = canvasThemes[themeName];
     const creditsEnabled = useUserStore((state) => state.features.creditsEnabled);
+    const walletMode = useUserStore((state) => state.features.walletMode);
     const promptOptimizerInstallation = usePluginStore((state) => state.installations.find((item) => item.manifest.id === PROMPT_OPTIMIZER_PLUGIN_ID));
     const promptOptimizerEnabled = usePluginStore((state) => state.pluginStates[PROMPT_OPTIMIZER_PLUGIN_ID]?.effectiveEnabled ?? Boolean(state.installations.find((item) => item.manifest.id === PROMPT_OPTIMIZER_PLUGIN_ID)?.enabled));
     const simpleMode = workspaceMode === "simple";
@@ -168,21 +169,23 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
         return promptOptimizerPlugin.createPromptOptimizer(createPluginHostContext(promptOptimizerPlugin, promptOptimizerInstallation, globalConfig));
     }, [globalConfig, promptOptimizerEnabled, promptOptimizerInstallation]);
     const generationCount = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
+    const generationTaskCount = mode === "image" ? generationCount : mode === "text" && !node.metadata?.listMode ? Math.max(1, Math.min(15, Math.floor(Math.abs(Number(node.metadata?.textCount)) || 1))) : 1;
     const priceChannel = resolveModelChannel(config, config.model);
     const configuredCredits = requestCreditCost({
+        walletMode,
         channelMode: priceChannel.scope === "system" ? "remote" : "local",
         modelCosts: priceChannel.modelCosts,
         model: modelOptionName(config.model),
-        count: mode === "image" ? generationCount : 1,
+        count: generationTaskCount,
         seconds: mode === "video" ? config.videoSeconds : 1,
         capability: mode,
         config,
         requirements: resolvedRequirements,
     });
-    const quoteRequest = modelQuoteRequest(config, config.model, mode, resolvedRequirements);
+    const quoteRequest = modelQuoteRequest(config, config.model, mode, resolvedRequirements, walletMode, "one-task-per-output");
     const quoteRequestKey = JSON.stringify(quoteRequest || null);
     const [routeQuote, setRouteQuote] = useState<LogicalModelQuote | null>(null);
-    const credits = routeQuote ? routeQuote.amountMicrocredits / 1_000_000 : configuredCredits;
+    const credits = routeQuote ? modelQuoteCredits(routeQuote, generationTaskCount) : configuredCredits;
     const activeReferenceCount = activeReferences.length;
     const videoFrameOptions = resolvedMentionReferences.filter((item) => item.active && item.kind === "image").map((item) => ({ nodeId: item.nodeId, label: item.label, title: item.title, previewUrl: item.previewUrl }));
     const hasVideoPromptTools = mode === "video" && !simpleMode && videoFrameOptions.length > 0;
@@ -257,7 +260,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
         return () => controller.abort();
         // quoteRequestKey captures the full normalized request without retriggering on object identity.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [creditsEnabled, quoteRequestKey]);
+    }, [creditsEnabled, walletMode, quoteRequestKey]);
 
     const skillReferences = useMemo(() => resolvedMentionReferences.filter((item) => item.kind === "skill"), [resolvedMentionReferences]);
 
@@ -409,7 +412,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                 }
                 onClick={() => (expanded ? submitExpandedPrompt() : submit())}
                 aria-label={actionLabel}
-                title={routeQuote ? modelQuoteDescription(routeQuote) : actionLabel}
+                title={routeQuote ? modelQuoteDescription(routeQuote, generationTaskCount, walletMode) : actionLabel}
             >
                 {showCost ? (
                     <span className="canvas-node-composer-submit-cost">

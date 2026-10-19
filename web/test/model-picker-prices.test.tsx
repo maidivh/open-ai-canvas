@@ -38,6 +38,13 @@ function fixture() {
     return normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [channel], model: "comfy::h3-multi", videoModel: "comfy::h3-multi" } }).config;
 }
 
+test("external model rows avoid unrounded per-request prices before a server quote", () => {
+    const config = fixture();
+    const markup = renderToStaticMarkup(<ModelLabel config={config} model={config.model} capability="video" walletMode="external" theme={canvasThemes.dark} creationVariant showConfiguredModelName={false} showPrice showDescription />);
+    expect(markup).toContain("按整积分结算");
+    expect(markup).not.toContain("0.1-0.2 积分/秒");
+});
+
 const requirements: ModelRequirements = { capability: "video", videoSeconds: "5", options: { vquality: "1080p" } };
 
 test("candidate rows show their configured prices instead of applying the previous model's specifications", () => {

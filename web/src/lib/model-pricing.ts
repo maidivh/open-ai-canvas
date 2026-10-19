@@ -15,8 +15,10 @@ type ModelCreditCost = {
     logicalPriceTiers?: ModelPriceTier[];
 };
 
-export function requestCreditCost(options: { channelMode: string; modelCosts?: ModelCreditCost[]; model: string; count?: string | number; seconds?: string | number; capability?: ModelCapability; config?: AiConfig; requirements?: ModelRequirements }) {
-    if (options.channelMode !== "remote") return null;
+export function requestCreditCost(options: { channelMode: string; walletMode?: "internal" | "external"; modelCosts?: ModelCreditCost[]; model: string; count?: string | number; seconds?: string | number; capability?: ModelCapability; config?: AiConfig; requirements?: ModelRequirements }) {
+    // External rounding is per billing order, including batches. Only the server
+    // knows the order boundaries; a local aggregate would understate the charge.
+    if (options.channelMode !== "remote" || options.walletMode === "external") return null;
     const cost = options.modelCosts?.find((item) => item.model === options.model) || null;
     if (!cost) return null;
     if (cost.pricePolicy === "channel") {
@@ -75,27 +77,37 @@ export function formatPriceRange(values: number[], suffix: string) {
     return unique.length === 1 ? `${format(unique[0])} ${suffix}` : `${format(unique[0])}-${format(unique[unique.length - 1])} ${suffix}`;
 }
 
-export function modelQuoteDescription(quote: LogicalModelQuote) {
-    const amount = (quote.amountMicrocredits / 1_000_000).toLocaleString("zh-CN", { maximumFractionDigits: 6 });
-    const descriptions = [`${quote.estimated ? "预计" : "本次"}消耗 ${amount} 积分`];
+/** The server has already applied per-order rounding; never round a raw batch sum here. */
+export function modelQuoteCredits(quote: LogicalModelQuote, taskCount = 1) {
+    return quote.amountMicrocredits * taskCount / 1_000_000;
+}
+
+export function modelQuoteDescription(quote: LogicalModelQuote, taskCount = 1, walletMode?: "internal" | "external") {
+    const amount = modelQuoteCredits(quote, taskCount).toLocaleString("zh-CN", { maximumFractionDigits: 6 });
+    const externalToken = walletMode === "external" && quote.billingMode === "token";
+    const descriptions = [`${taskCount > 1 ? `${taskCount} 笔任务合计` : ""}${externalToken ? "预扣上限" : `${quote.estimated ? "预计" : "本次"}消耗`} ${amount} 积分`];
     const estimate = quote.videoTokenEstimate;
     if (estimate) {
-        descriptions.push(`公式预估 ${estimate.formulaTokens.toLocaleString("zh-CN")} 视频 Token，平台额外预留 ${estimate.reservationMarginPercent}%（共 ${estimate.reservedTokens.toLocaleString("zh-CN")} Token）`);
+        descriptions.push(externalToken
+            ? `${taskCount > 1 ? "每笔任务" : ""}公式参考用量 ${estimate.formulaTokens.toLocaleString("zh-CN")} 视频 Token（含 ${estimate.reservationMarginPercent}% 预留为 ${estimate.reservedTokens.toLocaleString("zh-CN")} Token）`
+            : `${taskCount > 1 ? "每笔任务" : ""}公式预估 ${estimate.formulaTokens.toLocaleString("zh-CN")} 视频 Token，平台额外预留 ${estimate.reservationMarginPercent}%（共 ${estimate.reservedTokens.toLocaleString("zh-CN")} Token）`);
         if (estimate.referenceDurationEstimated) descriptions.push("未知的参考视频时长按 15 秒估算");
         if (estimate.dimensionsEstimated) descriptions.push("实际画幅尚未确定，尺寸按当前参数估算");
     }
-    if (quote.billingMode === "token") descriptions.push(estimate
-        ? "预估金额并非费用上限，成功任务优先按有效的实际用量结算；未返回用量时按火山引擎公式结算，额外预留不计入公式结算，可能补扣或退回差额"
-        : "预估金额并非费用上限，最终以成功任务返回的实际用量结算，可能补扣或退回差额");
+    if (quote.billingMode === "token") descriptions.push(externalToken
+        ? `预扣金额是本次授权上限，成功后按实际用量结算并退回差额${estimate ? "；未返回用量时按火山引擎公式结算，额外预留不计入公式结算" : ""}；超出预扣上限时转入核账，不自动补扣`
+        : estimate
+            ? "预估金额并非费用上限，成功任务优先按有效的实际用量结算；未返回用量时按火山引擎公式结算，额外预留不计入公式结算，可能补扣或退回差额"
+            : "预估金额并非费用上限，最终以成功任务返回的实际用量结算，可能补扣或退回差额");
     return descriptions.join("；");
 }
 
-export function modelQuoteRequest(config: AiConfig, value: string, capability?: ModelCapability, requirements?: ModelRequirements): ModelQuoteRequest | undefined {
+export function modelQuoteRequest(config: AiConfig, value: string, capability?: ModelCapability, requirements?: ModelRequirements, walletMode?: "internal" | "external", taskLayout: "single-task" | "one-task-per-output" = "single-task"): ModelQuoteRequest | undefined {
     if (!capability || !value) return undefined;
     const channel = resolveModelChannel(config, value);
     if (channel.scope !== "system") return undefined;
     const cost = channel.modelCosts?.find((item) => item.model === modelOptionName(value));
-    if (!cost || (!cost.logicalModelId && capability !== "video")) return undefined;
+    if (!cost || (!cost.logicalModelId && capability !== "video" && walletMode !== "external")) return undefined;
     const input = requirements?.input;
     const intent: ModelRequestIntent = {
         capability,
@@ -110,6 +122,7 @@ export function modelQuoteRequest(config: AiConfig, value: string, capability?: 
             ...(requirements?.options || {}),
             ...(requirements?.videoSeconds ? { videoSeconds: Number(requirements.videoSeconds) } : {}),
             ...(requirements?.imageSize ? { size: requirements.imageSize } : {}),
+            ...(capability === "image" && taskLayout === "one-task-per-output" ? { count: 1 } : {}),
         },
     };
     return cost.logicalModelId ? { logicalModelID: cost.logicalModelId, intent } : { channelId: channel.id, modelKey: modelOptionName(value), intent };

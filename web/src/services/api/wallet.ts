@@ -1,6 +1,28 @@
 import { http } from "@/services/api/request";
 import type { ModelTag } from "@/lib/model-tags";
 
+export type WalletMode = "internal" | "external";
+
+export type WalletSettings = {
+    mode: WalletMode;
+    baseUrl: string;
+    clientId: string;
+    siteId: number;
+    issuer: string;
+    rechargeUrl: string;
+    secretConfigured: boolean;
+    version: number;
+};
+
+export type WalletSettingsInput = Omit<WalletSettings, "secretConfigured"> & { clientSecret?: string };
+
+export function getAdminWalletSettings() {
+    return http.get<WalletSettings>("/admin/wallet-settings");
+}
+
+export function updateAdminWalletSettings(input: WalletSettingsInput) {
+    return http.put<WalletSettings>("/admin/wallet-settings", input);
+}
 
 export type CreditAccount = {
     userId: string;
@@ -28,6 +50,8 @@ export type CreditLedgerEntry = {
 };
 
 export type WalletSummary = {
+    walletMode?: WalletMode;
+    rechargeUrl?: string;
     account: CreditAccount;
     entries: CreditLedgerEntry[];
     total: number;
@@ -210,6 +234,9 @@ export type AdminRedeemCodePage = {
 };
 
 export type BillingOrder = {
+    walletMode?: WalletMode | "";
+    walletVersion?: number;
+    walletState?: "pending" | "reserved" | "settled" | "refunded" | "rejected" | "";
     id: string;
     userId: string;
     taskId?: string;

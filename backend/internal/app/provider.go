@@ -19,23 +19,24 @@ import (
 var sseFrameBoundaryPattern = regexp.MustCompile(`\r?\n\r?\n`)
 
 type canvasGenerationInput struct {
-	Mode             string                 `json:"mode"`
-	Prompt           string                 `json:"prompt"`
-	Config           providerConfig         `json:"config"`
-	ReferenceImages  []providerMedia        `json:"referenceImages"`
-	ReferenceVideos  []providerMedia        `json:"referenceVideos"`
-	ReferenceAudios  []providerMedia        `json:"referenceAudios"`
-	TextHistory      []providerTextMessage  `json:"textHistory"`
-	Mask             *providerMedia         `json:"mask"`
-	Metadata         map[string]interface{} `json:"metadata"`
-	AgentRequests    *agentToolRequests     `json:"agentRequests"`
-	TextOptions      canvasTextOptions      `json:"textOptions"`
-	ImageCapability  *ImageCapabilityConfig `json:"-"`
-	StreamText       bool                   `json:"-"` // 分镜请求使用上游 SSE 保活；最终结构仍在流结束后统一校验。
-	MaxOutputTokens  int                    `json:"-"`
-	OnTextDelta      func(string)           `json:"-"`
-	OnReasoningDelta func(string)           `json:"-"`
-	VideoCapability  *VideoCapabilityConfig `json:"-"`
+	Mode                     string                 `json:"mode"`
+	Prompt                   string                 `json:"prompt"`
+	Config                   providerConfig         `json:"config"`
+	ReferenceImages          []providerMedia        `json:"referenceImages"`
+	ReferenceVideos          []providerMedia        `json:"referenceVideos"`
+	ReferenceAudios          []providerMedia        `json:"referenceAudios"`
+	TextHistory              []providerTextMessage  `json:"textHistory"`
+	Mask                     *providerMedia         `json:"mask"`
+	Metadata                 map[string]interface{} `json:"metadata"`
+	AgentRequests            *agentToolRequests     `json:"agentRequests"`
+	TextOptions              canvasTextOptions      `json:"textOptions"`
+	ImageCapability          *ImageCapabilityConfig `json:"-"`
+	StreamText               bool                   `json:"-"` // 分镜请求使用上游 SSE 保活；最终结构仍在流结束后统一校验。
+	MaxOutputTokens          int                    `json:"-"`
+	EnforceWalletOutputLimit bool                   `json:"-"`
+	OnTextDelta              func(string)           `json:"-"`
+	OnReasoningDelta         func(string)           `json:"-"`
+	VideoCapability          *VideoCapabilityConfig `json:"-"`
 }
 
 type canvasTextOptions struct {
@@ -171,6 +172,33 @@ func (s *Service) processCanvasGenerationTask(ctx context.Context, userID string
 		// estimates and Agent context budgeting. Never silently fall back to a
 		// transport-specific fixed token count when the model declares one.
 		input.MaxOutputTokens = input.Config.CapabilityConfig.Text.MaxOutputTokens
+	}
+	if input.Mode == "text" && taskExecutionID(ctx) != "" {
+		task, loadErr := s.repo.Task(taskExecutionID(ctx))
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		if task.UserID != userID {
+			return nil, errors.New("任务用户不匹配")
+		}
+		if task.BillingOrderID != "" {
+			order, billingErr := s.repo.BillingOrder(task.BillingOrderID)
+			if billingErr != nil {
+				return nil, billingErr
+			}
+			if order.WalletMode == "external" && order.BillingMode == "token" {
+				switch input.Config.InterfaceType {
+				case "chat-completion", "openai-response", "claude-api":
+				default:
+					return nil, errors.New("共享钱包文本协议已变化，请重新提交")
+				}
+				if order.WalletOutputTokenLimit <= 0 {
+					return nil, errors.New("共享钱包文本输出上限缺失")
+				}
+				input.MaxOutputTokens = int(order.WalletOutputTokenLimit)
+				input.EnforceWalletOutputLimit = true
+			}
+		}
 	}
 	var textPublisher *taskTextStreamPublisher
 	if input.Mode == "text" && strings.HasPrefix(taskType, "canvas_text") {
