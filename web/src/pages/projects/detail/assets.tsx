@@ -402,7 +402,7 @@ export default function ProjectAssetsView({ detail, refreshProject }: ProjectDet
     const bindImagesMutation = useMutation({
         mutationFn: async (selectedAssetId: string) => {
             if (!imageAsset) throw new Error("未选择角色");
-            await saveRemoteUserDataNow();
+            await saveRemoteUserDataNow([]);
             const latest = useAssetStore.getState().assets;
             const pickerItem = imagePickerItems.find((item) => item.id === selectedAssetId);
             const selected = latest.find((asset) => asset.id === selectedAssetId) || (pickerItem?.external ? await externalAssetSources.importExternalAsset(pickerItem.external) : undefined);
