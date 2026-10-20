@@ -5,7 +5,9 @@ FROM --platform=$BUILDPLATFORM oven/bun:1.3.9 AS web-build
 
 WORKDIR /app/web
 COPY web/package.json web/bun.lock ./
-RUN --mount=type=cache,target=/root/.bun/install/cache bun install --frozen-lockfile --cache-dir=/root/.bun/install/cache
+# bun.lock 中部分条目未记录 tarball URL，bun 会回落到默认 registry；显式指定镜像源，
+# 避免国内构建机直连 registry.npmjs.org 下载超时或拿到损坏包。
+RUN --mount=type=cache,target=/root/.bun/install/cache bun install --frozen-lockfile --registry=https://registry.npmmirror.com --cache-dir=/root/.bun/install/cache
 COPY VERSION /app/VERSION
 COPY CHANGELOG.md /app/CHANGELOG.md
 COPY README.md /app/README.md
