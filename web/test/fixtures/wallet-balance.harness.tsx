@@ -103,6 +103,93 @@ function setServerMode(mode: "internal" | "external", creditsEnabled = true) {
     serverWallet = wallet(mode);
 }
 
+test.each([
+    ["unchanged settings", true],
+    ["unrelated feature changes", false],
+] as const)("a public refresh with %s preserves a valid pending wallet balance", async (_description, taskCenterEnabled) => {
+    const pending = deferred<WalletSummary>();
+    walletResponse = () => pending.promise;
+    await show();
+    expect(calls.filter((call) => call.url === "/wallet")).toHaveLength(1);
+
+    serverFeatures = { ...serverFeatures, taskCenterEnabled };
+    await act(async () => { await refreshFeatureAvailability(); });
+    expect(useUserStore.getState().features.taskCenterEnabled).toBe(taskCenterEnabled);
+    await act(async () => { pending.resolve(wallet("internal")); });
+    await act(tick);
+
+    expect(latest.error).toBeNull();
+    expect(latest.availableMicrocredits).toBe(10_000_000);
+    expect(host.textContent).toContain("internal:10000000");
+    expect(useUserStore.getState().features.taskCenterEnabled).toBe(taskCenterEnabled);
+    expect(calls.filter((call) => call.url === "/wallet")).toHaveLength(1);
+});
+
+test("a wallet mode learned after an unrelated public update preserves the updated feature", async () => {
+    const pending = deferred<WalletSummary>();
+    walletResponse = () => pending.promise;
+    await show();
+    serverFeatures = { ...serverFeatures, taskCenterEnabled: false };
+    await act(async () => { await refreshFeatureAvailability(); });
+    await act(async () => { pending.resolve(wallet("external")); });
+    await act(tick);
+
+    expect(latest.error).toBeNull();
+    expect(latest.walletMode).toBe("external");
+    expect(latest.availableMicrocredits).toBe(100_000_000);
+    expect(useUserStore.getState().features.taskCenterEnabled).toBe(false);
+    expect(useUserStore.getState().features.rechargeUrl).toBe("https://wallet.example/ai");
+});
+
+test.each([
+    ["wallet mode", { walletMode: "external" as const }, "external", 100_000_000],
+    ["credits enabled", { creditsEnabled: false }, "internal", null],
+    ["recharge URL", { rechargeUrl: "https://wallet.example/new" }, "internal", 20_000_000],
+] as const)("a public %s change replaces a pending wallet snapshot", async (_description, changed, mode, balance) => {
+    const pending = deferred<WalletSummary>();
+    walletResponse = () => pending.promise;
+    await show();
+
+    serverFeatures = { ...serverFeatures, ...changed };
+    serverWallet = {
+        ...wallet(mode),
+        rechargeUrl: serverFeatures.rechargeUrl,
+        account: { ...wallet(mode).account, availableMicrocredits: balance ?? 0 },
+    };
+    walletResponse = undefined;
+    await act(async () => { await refreshFeatureAvailability(); });
+    await act(tick);
+    await act(async () => { pending.resolve(wallet("internal")); });
+    await act(tick);
+
+    expect(latest.error).toBeNull();
+    expect(latest.walletMode).toBe(mode);
+    expect(latest.availableMicrocredits).toBe(balance);
+    expect(latest.rechargeUrl).toBe(serverFeatures.rechargeUrl);
+    expect(useUserStore.getState().features.creditsEnabled).toBe(serverFeatures.creditsEnabled);
+});
+
+test.each([
+    ["wallet mode", { walletMode: "external" as const }],
+    ["credits enabled", { creditsEnabled: false }],
+    ["recharge URL", { rechargeUrl: "https://wallet.example/new" }],
+] as const)("a silent public %s change still rejects an obsolete wallet response", async (_description, changed) => {
+    const pending = deferred<WalletSummary>();
+    walletResponse = () => pending.promise;
+    await show();
+
+    serverFeatures = { ...serverFeatures, ...changed };
+    await act(async () => { await refreshFeatureAvailability(undefined, { notifyWallet: false }); });
+    await act(async () => { pending.resolve(wallet("internal")); });
+    await act(tick);
+
+    expect(latest.error?.name).toBe("AbortError");
+    expect(latest.availableMicrocredits).toBeNull();
+    expect(useUserStore.getState().features.walletMode).toBe(serverFeatures.walletMode);
+    expect(useUserStore.getState().features.creditsEnabled).toBe(serverFeatures.creditsEnabled);
+    expect(useUserStore.getState().features.rechargeUrl).toBe(serverFeatures.rechargeUrl);
+});
+
 test("wallet API mode changes update real model-picker server quoting and settle back to internal pricing", async () => {
     await show();
     expect(host.textContent).toContain("internal:10000000");

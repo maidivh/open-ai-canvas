@@ -515,8 +515,7 @@ func TestSharedWalletRestoreCanRetryAfterTopup(t *testing.T) {
 }
 
 func TestSharedWalletUnboundedAudioRejected(t *testing.T) {
-	s, _, _, _ := newSharedWalletTest(t)
-	if _, err := s.prepareWalletQuote(&model.BillingOrder{BillingMode: "per_second", Capability: "audio", AmountMicrocredits: 1000000}); err == nil {
+	if _, err := prepareWalletQuote(&model.BillingOrder{BillingMode: "per_second", Capability: "audio", AmountMicrocredits: 1000000}, model.SharedWalletSettings{Mode: "external"}); err == nil {
 		t.Fatal("unbounded audio estimate admitted as an authorization")
 	}
 }
@@ -550,32 +549,32 @@ func TestSharedWalletRouteSwitchPreservesExternalReservation(t *testing.T) {
 }
 
 func TestSharedWalletTextAuthorizationUsesProviderBounds(t *testing.T) {
-	s, _, _, _ := newSharedWalletTest(t)
+	wallet := model.SharedWalletSettings{Mode: "external"}
 	item := &model.ChannelModel{Capability: "text", Protocol: "chat-completion", CapabilityConfigJSON: `{"text":{"contextWindowTokens":128000,"maxOutputTokens":16384}}`}
-	estimate, err := s.walletTokenEstimate(estimateTaskTokens(map[string]any{"prompt": "中文测试"}), item, "token")
+	estimate, err := walletTokenEstimate(estimateTaskTokens(map[string]any{"prompt": "中文测试"}), item, "token", wallet)
 	if err != nil || estimate.InputTokens != 128000 || estimate.OutputTokens != 16384 || !estimate.ExternalBudget {
 		t.Fatalf("unsafe token authorization %+v %v", estimate, err)
 	}
 	bounded := estimateProxyTokens([]byte(`{"max_tokens":200}`))
-	if result, e := s.walletTokenEstimate(bounded, item, "token"); e != nil || result.OutputTokens != 200 {
+	if result, e := walletTokenEstimate(bounded, item, "token", wallet); e != nil || result.OutputTokens != 200 {
 		t.Fatalf("bounded proxy rejected %+v %v", result, e)
 	}
 	for _, body := range []string{`{}`, `{"maxOutputTokens":200}`, `{"max_output_tokens":200}`, `{"max_tokens":200,"max_completion_tokens":9000}`, `{"max_tokens":200,"n":10}`, `{"max_tokens":200,"n":0}`, `{"max_tokens":200,"n":1.5}`} {
-		if _, e := s.walletTokenEstimate(estimateProxyTokens([]byte(body)), item, "token"); e == nil {
+		if _, e := walletTokenEstimate(estimateProxyTokens([]byte(body)), item, "token", wallet); e == nil {
 			t.Fatalf("unsafe wire budget accepted %s", body)
 		}
 	}
 	agentEstimate := estimateTaskTokens(map[string]any{"agentRequests": map[string]any{"chatCompletion": map[string]any{"n": 10, "max_tokens": 200}}})
-	if _, e := s.walletTokenEstimate(agentEstimate, item, "token"); e == nil {
+	if _, e := walletTokenEstimate(agentEstimate, item, "token", wallet); e == nil {
 		t.Fatal("multiple-output Agent request admitted")
 	}
 	item.Protocol = "custom-unbounded"
-	if _, e := s.walletTokenEstimate(bounded, item, "token"); e == nil {
+	if _, e := walletTokenEstimate(bounded, item, "token", wallet); e == nil {
 		t.Fatal("unproven adapter admitted")
 	}
 	item.Protocol = "chat-completion"
 	item.CapabilityConfigJSON = ""
-	if _, e := s.walletTokenEstimate(bounded, item, "token"); e == nil {
+	if _, e := walletTokenEstimate(bounded, item, "token", wallet); e == nil {
 		t.Fatal("undeclared context ceiling admitted")
 	}
 }

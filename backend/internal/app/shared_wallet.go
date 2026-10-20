@@ -41,19 +41,18 @@ func walletSettingsView(c model.SharedWalletSettings) WalletSettingsView {
 	return WalletSettingsView{Mode: c.Mode, BaseURL: c.BaseURL, ClientID: c.ClientID, SiteID: c.SiteID, Issuer: c.Issuer, RechargeURL: c.RechargeURL, SecretConfigured: c.SecretCipher != "", Version: c.Version}
 }
 
-func (s *Service) walletQuoteAmount(amount int64) (int64, model.SharedWalletSettings, error) {
-	cfg, err := s.repo.SharedWalletSettings()
-	if err != nil {
-		return 0, cfg, err
-	}
+func walletQuoteAmount(amount int64, cfg model.SharedWalletSettings) (int64, error) {
 	if cfg.Mode == "external" {
 		point, e := repository.WalletPoints(amount)
-		return point * CreditScale, cfg, e
+		return point * CreditScale, e
 	}
-	return amount, cfg, nil
+	return amount, nil
 }
-func (s *Service) prepareWalletQuote(order *model.BillingOrder) (*model.BillingOrder, error) {
-	amount, cfg, err := s.walletQuoteAmount(order.AmountMicrocredits)
+
+// Estimation, rounding and admission must all refer to the original snapshot.
+// Admission rejects its version if the wallet configuration changes meanwhile.
+func prepareWalletQuote(order *model.BillingOrder, cfg model.SharedWalletSettings) (*model.BillingOrder, error) {
+	amount, err := walletQuoteAmount(order.AmountMicrocredits, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -78,11 +77,7 @@ func (s *Service) prepareWalletQuote(order *model.BillingOrder) (*model.BillingO
 
 // Freeze the same executable output bound used by the provider into the bill.
 // A guessed default in an estimate is never a permission for an unbounded call.
-func (s *Service) walletTokenEstimate(estimate tokenBillingEstimate, item *model.ChannelModel, mode string) (tokenBillingEstimate, error) {
-	cfg, err := s.repo.SharedWalletSettings()
-	if err != nil {
-		return estimate, err
-	}
+func walletTokenEstimate(estimate tokenBillingEstimate, item *model.ChannelModel, mode string, cfg model.SharedWalletSettings) (tokenBillingEstimate, error) {
 	if cfg.Mode != "external" {
 		return estimate, nil
 	}

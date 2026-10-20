@@ -514,9 +514,13 @@ func (s *Service) newLogicalModelBillingOrder(userID string, task *model.Task, i
 	if logicalModel.PricePolicy != "unified" {
 		return nil, BadAuthRequest("当前模型价格策略无效")
 	}
+	wallet, err := s.repo.SharedWalletSettings()
+	if err != nil {
+		return nil, err
+	}
 	quantity := int64(1)
 	tokenEstimate := estimateTaskBillingTokens(input, capability)
-	tokenEstimate, err = s.walletTokenEstimate(tokenEstimate, channelModel, logicalModel.BillingMode)
+	tokenEstimate, err = walletTokenEstimate(tokenEstimate, channelModel, logicalModel.BillingMode, wallet)
 	if err != nil {
 		return nil, err
 	}
@@ -575,7 +579,7 @@ func (s *Service) newLogicalModelBillingOrder(userID string, task *model.Task, i
 		return nil, err
 	}
 	snapshotCreditCost(order, costTier, requestedBillingQuantity(capability, config), tokenEstimate)
-	return s.prepareWalletQuote(order)
+	return prepareWalletQuote(order, wallet)
 }
 
 func (s *Service) ReserveProxyBilling(userID string, channelID string, modelKey string, capability string, scene string, idempotencyKey string, quantity int64) (*model.BillingOrder, error) {
@@ -639,7 +643,11 @@ func (s *Service) newBillingOrderWithPriceTier(userID string, taskID string, ide
 	if tier == nil {
 		return nil, BadAuthRequest("当前模型尚未配置所选规格的用户积分价格")
 	}
-	tokenEstimate, err = s.walletTokenEstimate(tokenEstimate, item, tier.BillingMode)
+	wallet, err := s.repo.SharedWalletSettings()
+	if err != nil {
+		return nil, err
+	}
+	tokenEstimate, err = walletTokenEstimate(tokenEstimate, item, tier.BillingMode, wallet)
 	if err != nil {
 		return nil, err
 	}
@@ -707,7 +715,7 @@ func (s *Service) newBillingOrderWithPriceTier(userID string, taskID string, ide
 		Status:                 model.BillingStatusReserved,
 	}
 	snapshotCreditCost(order, tier, requestedQuantity, tokenEstimate)
-	return s.prepareWalletQuote(order)
+	return prepareWalletQuote(order, wallet)
 }
 
 func (s *Service) channelModelPriceTierForBilling(channelModel model.ChannelModel, priceTierID string, capability string, intents ...ModelRequestIntent) (*model.ChannelModelPriceTier, error) {

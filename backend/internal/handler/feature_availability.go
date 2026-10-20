@@ -58,7 +58,9 @@ func RegisterFeatureAvailabilityRoutes(r *gin.RouterGroup, svc *service.Service)
 			return
 		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
-		req := current.FeatureAvailability
+		// Merge partial edits into persisted flags, never the external wallet's
+		// effective credits override, even if the mode changes before saving.
+		req := *current.ConfiguredFeatures
 		if err := c.ShouldBindJSON(&req); err != nil {
 			fail(c, http.StatusBadRequest, err)
 			return

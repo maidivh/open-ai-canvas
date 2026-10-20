@@ -4,7 +4,7 @@ import { Switch } from "@/pages/admin/ui/controls";
 import { AlertTriangle, Clapperboard, Coins, ListChecks, MonitorCog, PlugZap, RadioTower, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { getAdminFeatureAvailability, updateAdminFeatureAvailability } from "@/services/api/auth";
+import { getAdminFeatureAvailability, updateAdminFeatureAvailability, type AdminFeatureAvailability } from "@/services/api/auth";
 import { useUserStore, type FeatureAvailability } from "@/stores/use-user-store";
 import { AdminStatusBadge } from "./admin-ui";
 
@@ -124,11 +124,11 @@ export default function FeatureAvailabilityPanel() {
             setLoadError("");
             try {
                 const result = await getAdminFeatureAvailability();
-                const value = parseFeatureAvailability(result.features);
+                const { configured: value, effective } = parseAdminFeatureAvailability(result.features);
                 if (requestVersion !== requestVersionRef.current) return;
                 setSavedFeatures(value);
                 setDraftFeatures(value);
-                setGlobalFeatures(value);
+                setGlobalFeatures(effective);
                 setSaveError("");
                 if (announce) message.success("已重新读取当前功能状态");
             } catch (error) {
@@ -162,11 +162,11 @@ export default function FeatureAvailabilityPanel() {
         setSaveError("");
         try {
             const result = await updateAdminFeatureAvailability(toEditablePayload(expected));
-            const value = parseFeatureAvailability(result.features);
+            const { configured: value, effective } = parseAdminFeatureAvailability(result.features);
             if (!sameEditableFeatures(value, expected)) throw new Error("服务端返回的功能状态与本次保存内容不一致，请重新读取后核对");
             setSavedFeatures(value);
             setDraftFeatures(value);
-            setGlobalFeatures(value);
+            setGlobalFeatures(effective);
             message.success(`${featureByKey.get(key)?.title || "功能"}已${enabled ? "开启" : "关闭"}`);
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "保存功能开放配置失败";
@@ -373,6 +373,7 @@ function FeatureSourceRow({ row, saved, draft, saving, onChange }: { row: Featur
 }
 
 function effectiveFeatureValue(features: FeatureAvailability, key: FeatureKey) {
+    if (key === "creditsEnabled" && features.walletMode === "external") return true;
     if (key === "systemPluginsVisibleToUsers") return features.pluginCenterEnabled && features.systemPluginsVisibleToUsers;
     return features[key];
 }
@@ -394,6 +395,23 @@ function toEditablePayload(features: FeatureAvailability) {
 
 function sameEditableFeatures(left: FeatureAvailability, right: FeatureAvailability) {
     return editableFeatureKeys.every((key) => left[key] === right[key]);
+}
+
+function parseAdminFeatureAvailability(value: AdminFeatureAvailability) {
+    const effective = parseFeatureAvailability(value);
+    if (!value.configuredFeatures) {
+        if (effective.walletMode === "external") throw new Error("服务端未提供持久功能配置，请更新服务端后重新读取");
+        return { effective, configured: effective };
+    }
+    const configured = parseFeatureAvailability({
+        ...value.configuredFeatures,
+        walletMode: effective.walletMode,
+        rechargeUrl: effective.rechargeUrl,
+        configured: effective.configured,
+        updatedBy: effective.updatedBy,
+        updatedAt: effective.updatedAt,
+    });
+    return { effective, configured };
 }
 
 function parseFeatureAvailability(value: unknown): FeatureAvailability {

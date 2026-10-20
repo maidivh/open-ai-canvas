@@ -438,14 +438,18 @@ export function getFeatureAvailability(signal?: AbortSignal) {
     return http.get<{ features: FeatureAvailability }>("/features", { signal });
 }
 
+export type AdminFeatureAvailability = FeatureAvailability & {
+    configuredFeatures?: FeatureAvailability;
+};
+
 export function getAdminFeatureAvailability() {
-    return http.get<{ features: FeatureAvailability }>("/admin/settings/features");
+    return http.get<{ features: AdminFeatureAvailability }>("/admin/settings/features");
 }
 
 export function updateAdminFeatureAvailability(
     features: Partial<Pick<FeatureAvailability, "welcomeEnabled" | "shortDramaEnabled" | "taskCenterEnabled" | "creditsEnabled" | "customChannelsEnabled" | "frontendModelsEnabled" | "pluginCenterEnabled" | "systemPluginsVisibleToUsers" | "inspirationSourcesVisible" | "imageWorkbenchEnabled" | "videoWorkbenchEnabled">>,
 ) {
-    return http.patch<{ features: FeatureAvailability }>("/admin/settings/features", features);
+    return http.patch<{ features: AdminFeatureAvailability }>("/admin/settings/features", features);
 }
 
 export async function login(input: { username: string; password: string }) {

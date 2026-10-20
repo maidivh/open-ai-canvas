@@ -95,10 +95,6 @@ func (s *Service) QuoteLogicalModel(logicalModelID string, intent ModelRequestIn
 		quantity = 1
 	}
 	tokenEstimate := estimateTaskBillingTokens(input, capability)
-	tokenEstimate, err = s.walletTokenEstimate(tokenEstimate, &routed.ChannelModel, routed.LogicalModel.BillingMode)
-	if err != nil {
-		return nil, err
-	}
 
 	if routed.LogicalModel.PricePolicy == "channel" {
 		priceTierID := ""
@@ -114,6 +110,14 @@ func (s *Service) QuoteLogicalModel(logicalModelID string, intent ModelRequestIn
 
 	if routed.LogicalModel.PricePolicy != "unified" {
 		return nil, BadAuthRequest("当前模型价格策略无效")
+	}
+	wallet, err := s.repo.SharedWalletSettings()
+	if err != nil {
+		return nil, err
+	}
+	tokenEstimate, err = walletTokenEstimate(tokenEstimate, &routed.ChannelModel, routed.LogicalModel.BillingMode, wallet)
+	if err != nil {
+		return nil, err
 	}
 	amount := int64(0)
 	switch routed.LogicalModel.BillingMode {
@@ -148,7 +152,7 @@ func (s *Service) QuoteLogicalModel(logicalModelID string, intent ModelRequestIn
 	if amount < 0 {
 		return nil, BadAuthRequest("当前模型尚未配置有效的用户价格")
 	}
-	amount, _, err = s.walletQuoteAmount(amount)
+	amount, err = walletQuoteAmount(amount, wallet)
 	if err != nil {
 		return nil, err
 	}

@@ -47,9 +47,10 @@ type FeatureAvailability struct {
 
 type PublicFeatureAvailability struct {
 	FeatureAvailability
-	Configured bool      `json:"configured"`
-	UpdatedBy  string    `json:"updatedBy,omitempty"`
-	UpdatedAt  time.Time `json:"updatedAt,omitempty"`
+	ConfiguredFeatures *FeatureAvailability `json:"configuredFeatures,omitempty"`
+	Configured         bool                 `json:"configured"`
+	UpdatedBy          string               `json:"updatedBy,omitempty"`
+	UpdatedAt          time.Time            `json:"updatedAt,omitempty"`
 }
 
 func DefaultFeatureAvailability() FeatureAvailability {
@@ -71,18 +72,36 @@ func DefaultFeatureAvailability() FeatureAvailability {
 }
 
 func (s *Service) FeatureAvailability() (*PublicFeatureAvailability, error) {
-	setting, value, err := s.readFeatureAvailability()
+	return s.featureAvailabilityView(false)
+}
+
+func (s *Service) featureAvailabilityView(includeConfigured bool) (*PublicFeatureAvailability, error) {
+	setting, configured, err := s.readFeatureAvailability()
 	if err != nil {
 		return nil, err
 	}
-	return publicFeatureAvailability(setting, value), nil
+	value := configured
+	cfg, err := s.repo.SharedWalletSettings()
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Mode == "external" {
+		value.WalletMode = cfg.Mode
+		value.RechargeURL = cfg.RechargeURL
+		value.CreditsEnabled = true
+	}
+	result := publicFeatureAvailability(setting, value)
+	if includeConfigured {
+		result.ConfiguredFeatures = &configured
+	}
+	return result, nil
 }
 
 func (s *Service) AdminFeatureAvailability(actor *model.User) (*PublicFeatureAvailability, error) {
 	if err := s.requireAdmin(actor); err != nil {
 		return nil, err
 	}
-	return s.FeatureAvailability()
+	return s.featureAvailabilityView(true)
 }
 
 func (s *Service) UpdateFeatureAvailability(actor *model.User, value FeatureAvailability) (*PublicFeatureAvailability, error) {
@@ -93,6 +112,17 @@ func (s *Service) UpdateFeatureAvailability(actor *model.User, value FeatureAvai
 	if err != nil {
 		return nil, err
 	}
+	wallet, err := s.repo.SharedWalletSettings()
+	if err != nil {
+		return nil, err
+	}
+	// External billing forces credits on only in the effective public view.
+	// Full admin payloads must not replace the saved internal billing policy.
+	if wallet.Mode == "external" {
+		value.CreditsEnabled = before.CreditsEnabled
+	}
+	value.WalletMode = ""
+	value.RechargeURL = ""
 	encoded, err := json.Marshal(value)
 	if err != nil {
 		return nil, err
@@ -107,11 +137,11 @@ func (s *Service) UpdateFeatureAvailability(actor *model.User, value FeatureAvai
 	if err := s.appendAdminAudit(actor, "feature_availability.update", "system_setting", featureAvailabilitySettingKey, "更新功能开放配置", map[string]any{"before": before, "after": value}); err != nil {
 		return nil, err
 	}
-	return s.FeatureAvailability()
+	return s.featureAvailabilityView(true)
 }
 
 func (s *Service) FeatureEnabled(feature string) (bool, error) {
-	_, value, err := s.readFeatureAvailability()
+	value, err := s.FeatureAvailability()
 	if err != nil {
 		return false, err
 	}
@@ -179,24 +209,7 @@ func (s *Service) RequireFeature(feature string) error {
 	}
 }
 
-func (s *Service) readFeatureAvailability() (settingResult *model.SystemSetting, featureResult FeatureAvailability, resultErr error) {
-	defer func() {
-		if resultErr != nil {
-			return
-		}
-		cfg, err := s.repo.SharedWalletSettings()
-		if err != nil {
-			resultErr = err
-			return
-		}
-		featureResult.WalletMode = ""
-		featureResult.RechargeURL = ""
-		if cfg.Mode == "external" {
-			featureResult.WalletMode=cfg.Mode
-			featureResult.RechargeURL=cfg.RechargeURL
-			featureResult.CreditsEnabled = true
-		}
-	}()
+func (s *Service) readFeatureAvailability() (*model.SystemSetting, FeatureAvailability, error) {
 	setting, err := s.repo.SystemSetting(featureAvailabilitySettingKey)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, DefaultFeatureAvailability(), nil
@@ -209,6 +222,8 @@ func (s *Service) readFeatureAvailability() (settingResult *model.SystemSetting,
 	if strings.TrimSpace(setting.ValueJSON) == "" || json.Unmarshal([]byte(setting.ValueJSON), &value) != nil {
 		return nil, FeatureAvailability{}, errors.New("功能开放配置格式无效")
 	}
+	value.WalletMode = ""
+	value.RechargeURL = ""
 	return setting, value, nil
 }
 

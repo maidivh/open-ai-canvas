@@ -89,11 +89,12 @@ export function useWalletBalance(userId?: string, enabled = true) {
             signal.throwIfAborted();
             if (wallet.account.userId !== activeUserId) throw new Error("积分账户与当前用户不一致");
             const current = useUserStore.getState();
-            if (current.user !== user || current.features !== features) throw new DOMException("钱包状态已更新", "AbortError");
+            // 公共刷新会替换 features 对象；只有钱包配置变化才使余额快照失效。
+            if (current.user !== user || current.features.walletMode !== features.walletMode || current.features.creditsEnabled !== features.creditsEnabled || current.features.rechargeUrl !== features.rechargeUrl) throw new DOMException("钱包状态已更新", "AbortError");
             const walletMode = wallet.walletMode || features.walletMode || "internal";
             const rechargeUrl = wallet.rechargeUrl ?? features.rechargeUrl;
             if (features.walletMode !== walletMode || features.rechargeUrl !== rechargeUrl) {
-                current.setFeatures({ ...features, walletMode, rechargeUrl, creditsEnabled: walletMode === "external" || features.creditsEnabled });
+                current.setFeatures({ ...current.features, walletMode, rechargeUrl, creditsEnabled: walletMode === "external" || features.creditsEnabled });
             }
             return { availableMicrocredits: wallet.account.availableMicrocredits, policy: wallet.policy, walletMode, rechargeUrl };
         },
