@@ -47,7 +47,7 @@ export async function applyUserSession(payload: AuthSessionPayload) {
     withCanvasStorePersistenceSuppressed(() => withAssetStorePersistenceSuppressed(() => withUserScopedPersistenceSuppressed(() => {
         resetUserScopedMemory();
     })));
-    useUserStore.getState().setUser(payload.user);
+    useUserStore.getState().setUser(payload.user, { newSession: true });
     useUserStore.getState().setRuntimeLimits(payload.runtimeLimits);
     useUserStore.getState().setDrawingEngine(payload.drawingEngine);
     useUserStore.getState().setFeatures(payload.features);

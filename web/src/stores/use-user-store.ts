@@ -65,10 +65,11 @@ export const defaultFeatureAvailability: FeatureAvailability = {
 type UserStore = {
     hydrated: boolean;
     user: LocalUser | null;
+    sessionVersion: number;
     runtimeLimits: RuntimeLimits;
     drawingEngine: CanvasDrawingEngineSetting;
     features: FeatureAvailability;
-    setUser: (user: LocalUser | null) => void;
+    setUser: (user: LocalUser | null, options?: { newSession?: boolean }) => void;
     setRuntimeLimits: (limits?: RuntimeLimits) => void;
     setDrawingEngine: (setting?: CanvasDrawingEngineSetting) => void;
     setFeatures: (features?: FeatureAvailability) => void;
@@ -79,13 +80,16 @@ type UserStore = {
 export const useUserStore = create<UserStore>()((set) => ({
     hydrated: false,
     user: null,
+    sessionVersion: 0,
     runtimeLimits: { activeTaskLimit: 5, resourceUploadMB: 50, recycleBinRetentionDays: 30 },
     drawingEngine: { defaultEngine: DEFAULT_DRAWING_ENGINE },
     features: defaultFeatureAvailability,
-    setUser: (user) => set({ user }),
+    // Profile updates keep the session; login/logout and account switches fence
+    // pending requests even when the next session returns to the same user ID.
+    setUser: (user, options) => set((state) => ({ user, sessionVersion: state.sessionVersion + (options?.newSession || state.user?.id !== user?.id ? 1 : 0) })),
     setRuntimeLimits: (runtimeLimits) => set({ runtimeLimits: runtimeLimits || { activeTaskLimit: 5, resourceUploadMB: 50, recycleBinRetentionDays: 30 } }),
     setDrawingEngine: (drawingEngine) => set({ drawingEngine: drawingEngine || { defaultEngine: DEFAULT_DRAWING_ENGINE } }),
     setFeatures: (features) => set({ features: features ? { ...defaultFeatureAvailability, ...features } : defaultFeatureAvailability }),
     setHydrated: (hydrated) => set({ hydrated }),
-    clearSession: () => set({ user: null, runtimeLimits: { activeTaskLimit: 5, resourceUploadMB: 50, recycleBinRetentionDays: 30 }, drawingEngine: { defaultEngine: DEFAULT_DRAWING_ENGINE }, features: defaultFeatureAvailability }),
+    clearSession: () => set((state) => ({ user: null, sessionVersion: state.sessionVersion + 1, runtimeLimits: { activeTaskLimit: 5, resourceUploadMB: 50, recycleBinRetentionDays: 30 }, drawingEngine: { defaultEngine: DEFAULT_DRAWING_ENGINE }, features: defaultFeatureAvailability })),
 }));

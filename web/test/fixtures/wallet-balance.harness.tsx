@@ -17,6 +17,10 @@ const { useWalletBalance } = await import("../../src/hooks/use-wallet-balance");
 const { useUserStore, defaultFeatureAvailability } = await import("../../src/stores/use-user-store");
 const { ModelPicker } = await import("../../src/components/model-picker");
 const { WorkspaceWalletModal } = await import("../../src/components/layout/workspace-wallet-modal");
+const { WorkspaceAccountCard } = await import("../../src/components/layout/workspace-account-card");
+const { ProfilePane } = await import("../../src/pages/settings/profile-pane");
+const { MemoryRouter } = await import("react-router");
+const { loadProfileSession } = await import("../../src/services/profile-session");
 const { createModelChannel, defaultConfig, normalizeConfigSnapshot } = await import("../../src/stores/use-config-store");
 const { apiClient } = await import("../../src/services/api/request");
 const { refreshFeatureAvailability } = await import("../../src/lib/user-session");
@@ -71,6 +75,8 @@ beforeEach(() => {
             data = walletResponse ? await walletResponse() : serverWallet;
         } else if (request.url === "/model-catalog/quote") {
             data = { quote: { billingMode: "fixed_request", amountMicrocredits: quoteResponse ? await quoteResponse() : 1_000_000, estimated: false } };
+        } else if (request.url === "/auth/profile") {
+            data = { user: { ...user("member"), displayName: "Updated profile" }, hasPassword: true, emailEnabled: false, linuxdoEnabled: false };
         } else if (request.url === "/payments/products") data = { products: [] };
         else if (request.url === "/payments/providers") data = { providers: [] };
         else throw new Error(`Unexpected request: ${request.url}`);
@@ -102,6 +108,79 @@ function setServerMode(mode: "internal" | "external", creditsEnabled = true) {
     serverFeatures = { ...serverFeatures, walletMode: mode, creditsEnabled };
     serverWallet = wallet(mode);
 }
+
+test.each(["features", "wallet"] as const)("same-account profile refresh preserves the pending %s request", async (phase) => {
+    setServerMode("external"); useUserStore.getState().setFeatures(serverFeatures);
+    const pendingWallet = deferred<WalletSummary>();
+    const pendingFeatures = deferred<typeof serverFeatures>();
+    if (phase === "features") featureResponse = () => pendingFeatures.promise;
+    else walletResponse = () => pendingWallet.promise;
+    await show();
+    await act(async () => { await loadProfileSession("member", new AbortController().signal); });
+    await act(async () => { pendingFeatures.resolve(serverFeatures); pendingWallet.resolve(wallet("external")); });
+    await act(tick);
+    expect(useUserStore.getState().user?.displayName).toBe("Updated profile");
+    expect(latest.error).toBeNull();
+    expect(latest.availableMicrocredits).toBe(100_000_000);
+});
+
+test("real profile and account-card components preserve the balance when profile data arrives first", async () => {
+    setServerMode("external"); useUserStore.getState().setFeatures(serverFeatures);
+    const pending = deferred<WalletSummary>(); walletResponse = () => pending.promise;
+    await act(async () => root.render(
+        <QueryClientProvider client={client}><ConfigProvider theme={{ token: { motion: false } }}><App><MemoryRouter>
+            <Reader /><ProfilePane /><WorkspaceAccountCard onWallet={() => {}} onNavigate={() => {}} />
+        </MemoryRouter></App></ConfigProvider></QueryClientProvider>,
+    ));
+    await act(tick);
+    await act(async () => { pending.resolve(wallet("external")); });
+    await act(tick);
+    expect(document.querySelector(".workspace-account-card-balance")?.textContent).toContain("100");
+    expect(latest.error).toBeNull();
+    expect(calls.filter((call) => call.url === "/auth/profile")).toHaveLength(1);
+});
+
+test("a pending public feature refresh survives an ordinary profile update", async () => {
+    await show();
+    const pending = deferred<typeof serverFeatures>(); featureResponse = () => pending.promise;
+    const refresh = refreshFeatureAvailability();
+    await act(async () => { await loadProfileSession("member", new AbortController().signal); });
+    await act(async () => { pending.resolve({ ...serverFeatures, taskCenterEnabled: false }); await refresh; });
+    expect(useUserStore.getState().features.taskCenterEnabled).toBe(false);
+});
+
+test.each(["relogin", "account round trip", "renewed session"] as const)("a %s fetches a fresh wallet and rejects the previous session snapshot", async (transition) => {
+    setServerMode("external"); useUserStore.getState().setFeatures(serverFeatures);
+    const old = deferred<WalletSummary>(); walletResponse = () => old.promise;
+    await show();
+    walletResponse = undefined;
+    serverWallet = { ...wallet("external"), account: { ...wallet("external").account, availableMicrocredits: 50_000_000 } };
+    await act(async () => {
+        if (transition === "relogin") useUserStore.getState().clearSession();
+        if (transition === "account round trip") useUserStore.getState().setUser(user("other"));
+        useUserStore.getState().setUser(user("member"), { newSession: transition === "renewed session" });
+        useUserStore.getState().setFeatures(serverFeatures);
+    });
+    await act(tick);
+    await act(async () => { old.resolve(wallet("internal")); });
+    await act(tick);
+    expect(useUserStore.getState().user?.id).toBe("member");
+    expect(latest.error).toBeNull();
+    expect(latest.walletMode).toBe("external");
+    expect(latest.availableMicrocredits).toBe(50_000_000);
+    expect(calls.filter((call) => call.url === "/wallet")).toHaveLength(2);
+});
+
+test.each(["relogin", "account round trip", "renewed session"] as const)("a previous session public refresh cannot change features after %s", async (transition) => {
+    const old = deferred<typeof serverFeatures>(); featureResponse = () => old.promise;
+    const refresh = refreshFeatureAvailability();
+    const previousUser = useUserStore.getState().user;
+    if (transition === "relogin") useUserStore.getState().clearSession();
+    if (transition === "account round trip") useUserStore.getState().setUser(user("other"));
+    useUserStore.getState().setUser(previousUser, { newSession: transition === "renewed session" });
+    await act(async () => { old.resolve({ ...serverFeatures, creditsEnabled: false }); await refresh; });
+    expect(useUserStore.getState().features.creditsEnabled).toBe(true);
+});
 
 test.each([
     ["unchanged settings", true],

@@ -34,7 +34,8 @@ export function ProfilePane() {
     const [searchParams, setSearchParams] = useSearchParams();
     const queryClient = useQueryClient();
     const userId = useUserStore((state) => state.user?.id);
-    const queryKey = ["user-profile", userId];
+    const sessionVersion = useUserStore((state) => state.sessionVersion);
+    const queryKey = ["user-profile", userId, sessionVersion];
     const profileQuery = useQuery({ queryKey, queryFn: ({ signal }) => loadProfileSession(userId, signal), enabled: !!userId, retry: false, refetchOnWindowFocus: false, staleTime: 0 });
     const profile = profileQuery.data;
     const [passwordForm] = Form.useForm<PasswordFields>();
@@ -105,7 +106,7 @@ export function ProfilePane() {
     };
 
     const updateAvatarUser = (user: LocalUser) => {
-        if (useUserStore.getState().user?.id !== userId || user.id !== userId) return;
+        if (useUserStore.getState().sessionVersion !== sessionVersion || useUserStore.getState().user?.id !== userId || user.id !== userId) return;
         invalidateAuthSessionCache();
         useUserStore.getState().setUser(user);
         queryClient.setQueryData<UserProfile>(queryKey, (current) => (current ? { ...current, user } : current));

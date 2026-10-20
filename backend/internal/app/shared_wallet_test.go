@@ -28,6 +28,7 @@ type walletTestServer struct {
 	bills           map[string]walletReply
 	failAfterCommit bool
 	rejectSettle    bool
+	beforeReserve   func()
 }
 
 func newSharedWalletTest(t *testing.T) (*Service, *gorm.DB, *walletTestServer, *model.User) {
@@ -57,6 +58,9 @@ func newSharedWalletTest(t *testing.T) (*Service, *gorm.DB, *walletTestServer, *
 		}
 		action := strings.TrimPrefix(r.URL.Path, "/api/ht_hot/billing/v1/")
 		upstream.calls[action]++
+		if action == "reserve" && upstream.beforeReserve != nil {
+			upstream.beforeReserve()
+		}
 		reply := walletReply{OK: true, Balance: upstream.balance}
 		if action == "status" {
 			reply = upstream.bills[input.Trade]

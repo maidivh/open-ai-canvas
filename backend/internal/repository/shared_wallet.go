@@ -384,7 +384,19 @@ func requireNonbillableTaskAdmission(tx *gorm.DB, task *model.Task) error {
 }
 
 func (r *Repository) CompleteWalletOperation(op model.WalletOperation, state string, response string, balance, charged int64, reason string) error {
+	snapshot, err := r.BillingOrder(op.BillingOrderID)
+	if err != nil {
+		return err
+	}
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		var task *model.Task
+		if op.Action == "reserve" {
+			var err error
+			task, err = lockWalletBillingTask(tx, snapshot)
+			if err != nil {
+				return err
+			}
+		}
 		updated := tx.Model(&model.WalletOperation{}).Where("id = ? AND state = ?", op.ID, "pending").Updates(map[string]any{"state": state, "response_json": response, "error": reason, "updated_at": time.Now()})
 		if updated.Error != nil {
 			return updated.Error
@@ -413,7 +425,10 @@ func (r *Repository) CompleteWalletOperation(op model.WalletOperation, state str
 		switch op.Action {
 		case "reserve":
 			updates["wallet_state"] = "reserved"
-			if order.Status == model.BillingStatusUncertain {
+			if !walletBillingTaskCanRun(task, order) {
+				updates["status"] = model.BillingStatusUncertain
+				updates["error"] = "任务已停止，已确认的共享钱包预扣需核对"
+			} else if order.Status == model.BillingStatusUncertain {
 				updates["status"] = model.BillingStatusReserved
 			}
 		case "settle", "restore":
@@ -454,13 +469,26 @@ func (r *Repository) CompleteWalletOperation(op model.WalletOperation, state str
 }
 
 func (r *Repository) MarkExternalWalletRunning(id string) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
+	snapshot, err := r.BillingOrder(id)
+	if err != nil {
+		return err
+	}
+	stopped := false
+	err = r.db.Transaction(func(tx *gorm.DB) error {
+		task, err := lockWalletBillingTask(tx, snapshot)
+		if err != nil {
+			return err
+		}
 		if err := tx.Model(&model.BillingOrder{}).Where("id = ?", id).UpdateColumn("updated_at", time.Now()).Error; err != nil {
 			return err
 		}
 		var order model.BillingOrder
 		if err := tx.First(&order, "id = ?", id).Error; err != nil {
 			return err
+		}
+		if !walletBillingTaskCanRun(task, order) {
+			stopped = true
+			return New(tx).MarkBillingUncertain(id, "任务已停止，已确认的共享钱包预扣需核对")
 		}
 		if order.WalletState != "reserved" {
 			return ErrBillingStateConflict
@@ -474,6 +502,36 @@ func (r *Repository) MarkExternalWalletRunning(id string) error {
 		}
 		return New(tx).MarkBillingRunning(id)
 	})
+	if err == nil && stopped {
+		return ErrBillingStateConflict
+	}
+	return err
+}
+
+// Task identity is fixed at billing admission. Lock the task before the order,
+// matching task cancellation/route updates and avoiding a read/check/write gap.
+// The first statement is a write so SQLite can acquire its writer lock before
+// reading a snapshot; PostgreSQL holds the same row lock until the commit.
+func lockWalletBillingTask(tx *gorm.DB, order *model.BillingOrder) (*model.Task, error) {
+	if order.TaskID == "" {
+		return nil, nil
+	}
+	if err := tx.Model(&model.Task{}).Where("id = ?", order.TaskID).
+		UpdateColumn("updated_at", gorm.Expr("updated_at")).Error; err != nil {
+		return nil, err
+	}
+	var task model.Task
+	if err := tx.First(&task, "id = ?", order.TaskID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return &task, nil
+		}
+		return nil, err
+	}
+	return &task, nil
+}
+
+func walletBillingTaskCanRun(task *model.Task, order model.BillingOrder) bool {
+	return task == nil || (task.UserID == order.UserID && task.BillingOrderID == order.ID && task.Status == model.TaskStatusRunning)
 }
 
 func (r *Repository) ExternalWalletLedger(userID, entryType string, limit, offset int) ([]model.CreditLedgerEntry, int64, error) {

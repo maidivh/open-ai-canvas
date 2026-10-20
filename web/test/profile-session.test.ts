@@ -11,7 +11,7 @@ test("profile refresh synchronizes avatars while rejecting stale account and can
     const previousUser = useUserStore.getState().user;
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     try {
-        for (const scenario of ["refresh", "switched-account", "wrong-user", "cancelled", "failure"] as const) {
+        for (const scenario of ["refresh", "switched-account", "relogin", "account-round-trip", "renewed-session", "wrong-user", "cancelled", "failure"] as const) {
             useUserStore.getState().setUser(originalUser);
             let respond!: (value: unknown) => void;
             let reject!: (reason: Error) => void;
@@ -23,6 +23,15 @@ test("profile refresh synchronizes avatars while rejecting stale account and can
             const key = ["user-profile", scenario];
             const request = client.fetchQuery({ queryKey: key, queryFn: ({ signal }) => loadProfileSession(originalUser.id, signal) }).catch((error) => error);
             if (scenario === "switched-account") useUserStore.getState().setUser({ ...originalUser, id: "other-user" });
+            if (scenario === "relogin") {
+                useUserStore.getState().clearSession();
+                useUserStore.getState().setUser(originalUser);
+            }
+            if (scenario === "account-round-trip") {
+                useUserStore.getState().setUser({ ...originalUser, id: "other-user" });
+                useUserStore.getState().setUser(originalUser);
+            }
+            if (scenario === "renewed-session") useUserStore.getState().setUser(originalUser, { newSession: true });
             if (scenario === "cancelled") {
                 await client.cancelQueries({ queryKey: key });
                 useUserStore.getState().setUser({ ...originalUser, avatarPreset: "cat" });
