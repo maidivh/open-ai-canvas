@@ -37,14 +37,16 @@ func reserveBillingOrder(tx *gorm.DB, order *model.BillingOrder) error {
 	if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&account).Error; err != nil {
 		return err
 	}
-	updated := tx.Model(&model.CreditAccount{}).
-		Where("user_id = ? AND available_microcredits >= ?", order.UserID, order.AmountMicrocredits).
-		Updates(map[string]any{
-			"available_microcredits": gorm.Expr("available_microcredits - ?", order.AmountMicrocredits),
-			"reserved_microcredits":  gorm.Expr("reserved_microcredits + ?", order.AmountMicrocredits),
-			"version":                gorm.Expr("version + 1"),
-			"updated_at":             time.Now(),
-		})
+	accountQuery := tx.Model(&model.CreditAccount{}).Where("user_id = ?", order.UserID)
+	if order.AmountMicrocredits > 0 {
+		accountQuery = accountQuery.Where("available_microcredits >= ?", order.AmountMicrocredits)
+	}
+	updated := accountQuery.Updates(map[string]any{
+		"available_microcredits": gorm.Expr("available_microcredits - ?", order.AmountMicrocredits),
+		"reserved_microcredits":  gorm.Expr("reserved_microcredits + ?", order.AmountMicrocredits),
+		"version":                gorm.Expr("version + 1"),
+		"updated_at":             time.Now(),
+	})
 	if updated.Error != nil {
 		return updated.Error
 	}

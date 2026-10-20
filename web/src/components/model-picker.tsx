@@ -54,6 +54,7 @@ export function ModelPicker({
 }: ModelPickerProps) {
     const creditsEnabled = useUserStore((state) => state.features.creditsEnabled);
     const walletMode = useUserStore((state) => state.features.walletMode);
+    const userId = useUserStore((state) => state.user?.id);
     const pickerId = useId();
     // 双保险：即使 store merge 写出非法 theme，这里也兜底到 dark，避免 "reading 'node'" 崩溃
     const rawTheme = useActiveTheme();
@@ -104,7 +105,7 @@ export function ModelPicker({
                 if (!controller.signal.aborted) setRouteQuote(undefined);
             });
         return () => controller.abort();
-    }, [creditsEnabled, walletMode, quoteRequest, showSelectedPrice]);
+    }, [creditsEnabled, walletMode, quoteRequest, showSelectedPrice, userId]);
 
     useEffect(() => {
         const closeOtherPicker = (event: Event) => {
@@ -465,7 +466,7 @@ function modelMenuPrice(config: AiConfig, model: string, capability?: ModelCapab
     const channel = resolveModelChannel(config, model);
     const cost = channel.modelCosts?.find((item) => item.model === modelOptionName(model));
     if (!cost) return channel.scope === "system" ? null : undefined;
-    if (walletMode === "external") return cost.pricePolicy === "channel" && !cost.logicalPriceTiers?.length ? null : { kind: "estimate", label: "按整积分结算", title: "以服务端报价为准，每笔账单分别向上取整" };
+    if (walletMode === "external" && channel.scope === "system") return cost.pricePolicy === "channel" && !cost.logicalPriceTiers?.length ? null : { kind: "estimate", label: "按整积分结算", title: "以服务端报价为准，每笔账单分别向上取整" };
     if (cost.pricePolicy === "channel") {
         const tiers = cost.logicalPriceTiers || [];
         if (!tiers.length) return null;

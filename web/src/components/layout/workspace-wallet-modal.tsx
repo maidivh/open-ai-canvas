@@ -106,7 +106,12 @@ export function WorkspaceWalletModal({ open, onClose, pendingPaymentOrderId, pay
         try {
             const result = await getWallet(targetPage, 20, "all");
             if (result.account.userId !== userId) throw new Error("积分账户与当前用户不一致");
-            if (sequence === requestSequence.current) setWallet(result);
+            const current = useUserStore.getState();
+            if (sequence !== requestSequence.current || current.user?.id !== userId) return;
+            setWallet(result);
+            if (result.walletMode && (result.walletMode !== current.features.walletMode || (result.rechargeUrl || "") !== (current.features.rechargeUrl || ""))) {
+                window.dispatchEvent(new CustomEvent("wallet:updated"));
+            }
         } catch (error) {
             if (sequence === requestSequence.current) setWalletError(error instanceof Error ? error.message : "读取积分账户失败");
         } finally {

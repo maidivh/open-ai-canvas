@@ -434,8 +434,8 @@ export function getSystemChannels() {
     return http.get<{ channels: ModelChannel[] }>("/channels/system");
 }
 
-export function getFeatureAvailability() {
-    return http.get<{ features: FeatureAvailability }>("/features");
+export function getFeatureAvailability(signal?: AbortSignal) {
+    return http.get<{ features: FeatureAvailability }>("/features", { signal });
 }
 
 export function getAdminFeatureAvailability() {

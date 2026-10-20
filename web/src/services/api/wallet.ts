@@ -271,8 +271,8 @@ export type BillingOrder = {
     updatedAt: string;
 };
 
-export function getWallet(page = 1, pageSize = 30, type = "all") {
-    return http.get<WalletSummary>("/wallet", { params: { type, page, pageSize } });
+export function getWallet(page = 1, pageSize = 30, type = "all", signal?: AbortSignal) {
+    return http.get<WalletSummary>("/wallet", { params: { type, page, pageSize }, signal });
 }
 
 export function redeemCredits(code: string) {

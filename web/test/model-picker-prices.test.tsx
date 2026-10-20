@@ -4,6 +4,7 @@ import { ModelLabel, ModelPicker } from "../src/components/model-picker";
 import { canvasThemes } from "../src/lib/canvas-theme";
 import { defaultModelCapabilityConfig } from "../src/lib/model-capabilities";
 import { requestCreditCost } from "../src/lib/model-pricing";
+import { mergeFetchedChannelModelCosts } from "../src/lib/channel-model-catalog";
 import type { ModelRequirements } from "../src/lib/model-selection";
 import { createModelChannel, defaultConfig, normalizeConfigSnapshot } from "../src/stores/use-config-store";
 
@@ -43,6 +44,15 @@ test("external model rows avoid unrounded per-request prices before a server quo
     const markup = renderToStaticMarkup(<ModelLabel config={config} model={config.model} capability="video" walletMode="external" theme={canvasThemes.dark} creationVariant showConfiguredModelName={false} showPrice showDescription />);
     expect(markup).toContain("按整积分结算");
     expect(markup).not.toContain("0.1-0.2 积分/秒");
+});
+
+test("user channel models never inherit the platform external-wallet settlement label", () => {
+    const channel = createModelChannel({ id: "my-channel", name: "My channel", scope: "user", interfaceType: "chat-completion", models: ["my-model"] });
+    channel.modelCosts = mergeFetchedChannelModelCosts(channel, [{ id: "my-model", modelType: "text", supportedEndpointTypes: ["openai"] }]);
+    const config = normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [channel], model: "my-channel::my-model", textModel: "my-channel::my-model" } }).config;
+    const render = (walletMode: "internal" | "external") => renderToStaticMarkup(<ModelLabel config={config} model={config.model} capability="text" walletMode={walletMode} theme={canvasThemes.dark} creationVariant showConfiguredModelName={false} showPrice showDescription />);
+    expect(render("external")).not.toContain("按整积分结算");
+    expect(render("external")).toBe(render("internal"));
 });
 
 const requirements: ModelRequirements = { capability: "video", videoSeconds: "5", options: { vquality: "1080p" } };

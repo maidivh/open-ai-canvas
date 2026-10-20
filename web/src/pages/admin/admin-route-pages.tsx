@@ -8,7 +8,8 @@ import { AdminPageFrame } from "./components/admin-shell";
 import { readAnnouncementPendingReview } from "./components/admin-announcement-safety";
 import { WalletSettingsDrawer } from "./components/wallet-settings-drawer";
 import { getAdminWalletSettings, type WalletSettings } from "@/services/api/wallet";
-import { getFeatureAvailability, invalidateAuthSessionCache } from "@/services/api/auth";
+import { invalidateAuthSessionCache } from "@/services/api/auth";
+import { refreshFeatureAvailability } from "@/services/feature-availability";
 import { useUserStore } from "@/stores/use-user-store";
 
 const AnalyticsPanel = lazy(() => import("./components/analytics-panel"));
@@ -93,7 +94,7 @@ export function CreditOperationsPage() {
         useUserStore.getState().setFeatures({ ...currentFeatures, walletMode: next.mode, rechargeUrl: next.rechargeUrl, creditsEnabled: next.mode === "external" ? true : currentFeatures.creditsEnabled });
         invalidateAuthSessionCache();
         void queryClient.invalidateQueries({ queryKey: ["wallet-balance"] });
-        void getFeatureAvailability().then(({ features }) => useUserStore.getState().setFeatures(features)).catch(() => message.warning("扣费设置已保存，功能状态刷新失败，请刷新页面"));
+        void refreshFeatureAvailability().catch(() => message.warning("扣费设置已保存，功能状态刷新失败，请刷新页面"));
         if (next.mode === "external") setActiveOperation(null);
     };
     return (

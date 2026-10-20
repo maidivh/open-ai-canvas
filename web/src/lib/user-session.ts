@@ -1,4 +1,5 @@
-import { getFeatureAvailability, type AuthSessionPayload } from "@/services/api/auth";
+import type { AuthSessionPayload } from "@/services/api/auth";
+export { refreshFeatureAvailability } from "@/services/feature-availability";
 import { projectImageParameters, imageParametersForSpec } from "./image-parameters";
 import { getModelCatalog, type CapabilitySpec, type ModelCatalogResponse, type OptionConstraint, type PublicChannelCatalog, type PublicLogicalModel } from "@/services/api/logical-models";
 import { localForageStorage } from "@/lib/localforage-storage";
@@ -311,10 +312,4 @@ function maxNumericOption(option: OptionConstraint | undefined, fallback: number
 function booleanOption(option: OptionConstraint | undefined, fallback: unknown) {
     const supported = (option?.values || []).some((value) => value === true || value === "true");
     return { supported, default: supported && String(fallback) === "true" };
-}
-
-export async function refreshFeatureAvailability() {
-    const payload = await getFeatureAvailability();
-    useUserStore.getState().setFeatures(payload.features);
-    return payload.features;
 }

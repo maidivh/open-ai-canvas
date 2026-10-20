@@ -246,13 +246,20 @@ func (r *Repository) PendingWalletOrders() ([]string, error) {
 	var ids []string
 	// Never precharge an untouched queued task in the reconciler. Only requests
 	// attempted by a worker or a terminal operation need network reconciliation.
-	err := r.db.Model(&model.WalletOperation{}).Where("state = ? AND (attempts > 0 OR action <> ?)", "pending", "reserve").Distinct("billing_order_id").Limit(50).Pluck("billing_order_id", &ids).Error
+	pending := r.db.Model(&model.WalletOperation{}).Select("billing_order_id").
+		Where("state = ? AND (attempts > 0 OR action <> ?)", "pending", "reserve")
+	// Claim/release updates the order even when its snapshot fails before an
+	// operation is attempted. Oldest-first selection lets later orders progress.
+	err := r.db.Model(&model.BillingOrder{}).Where("id IN (?)", pending).
+		Where("wallet_mode = ? AND (wallet_lock_until IS NULL OR wallet_lock_until < ?)", "external", time.Now()).
+		Order("updated_at asc, id asc").Limit(50).Pluck("id", &ids).Error
 	return ids, err
 }
 
 func (r *Repository) RejectedWalletRestores() ([]string, error) {
 	var ids []string
-	err := r.db.Model(&model.WalletOperation{}).Where("action = ? AND state = ? AND error = ?", "restore", "rejected", "insufficient").Limit(50).Pluck("billing_order_id", &ids).Error
+	err := r.db.Model(&model.WalletOperation{}).Where("action = ? AND state = ? AND error = ?", "restore", "rejected", "insufficient").
+		Order("updated_at asc, id asc").Limit(50).Pluck("billing_order_id", &ids).Error
 	return ids, err
 }
 func (r *Repository) AttemptWalletOperation(id string) error {

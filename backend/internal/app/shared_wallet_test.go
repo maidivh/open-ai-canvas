@@ -244,6 +244,124 @@ func TestSharedWalletTimeoutReplaysOriginalOperation(t *testing.T) {
 	}
 }
 
+func TestSharedWalletReconciliationProgressesPastFailedOrders(t *testing.T) {
+	for _, manual := range []bool{false, true} {
+		t.Run(fmt.Sprintf("admin=%v", manual), func(t *testing.T) {
+			s, db, up, _ := newSharedWalletTest(t)
+			for i := 0; i < 50; i++ {
+				order := walletTestOrder(t, s, fmt.Sprintf("a-stuck-%02d", i), CreditScale)
+				up.failAfterCommit = true
+				if err := s.MarkBillingRunning(order.ID); err == nil {
+					t.Fatal("unconfirmed reserve unexpectedly succeeded")
+				}
+				var cfg model.SharedWalletSettings
+				if err := json.Unmarshal([]byte(order.WalletConfigJSON), &cfg); err != nil {
+					t.Fatal(err)
+				}
+				// The original credentials can become unreadable before the next
+				// attempt, so fairness must not depend on reaching the remote API.
+				cfg.SecretCipher = "enc:v1:unreadable-original-secret"
+				raw, err := json.Marshal(cfg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := db.Model(&model.BillingOrder{}).Where("id = ?", order.ID).Update("wallet_config_json", string(raw)).Error; err != nil {
+					t.Fatal(err)
+				}
+			}
+			ready := walletTestOrder(t, s, "z-ready-refund", 2*CreditScale)
+			if err := s.MarkBillingRunning(ready.ID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.repo.QueueWalletOperation(ready.ID, "refund", nil); err != nil {
+				t.Fatal(err)
+			}
+			for round := 0; round < 3; round++ {
+				var done int
+				var err error
+				if manual {
+					done, err = s.ReconcileSharedWallet(context.Background(), &model.User{ID: "admin", Role: model.UserRoleAdmin})
+				} else {
+					done, err = s.reconcileSharedWallet(context.Background())
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Logf("round %d completed %d orders", round+1, done)
+				if round == 0 {
+					saved, err := s.repo.BillingOrder(ready.ID)
+					if err != nil || saved.Status == model.BillingStatusRefunded {
+						t.Fatalf("first reconciliation exceeded its bounded batch: %+v %v", saved, err)
+					}
+				}
+			}
+			saved, err := s.repo.BillingOrder(ready.ID)
+			if err != nil || saved.Status != model.BillingStatusRefunded {
+				t.Fatalf("later refund starved across consecutive reconciliation rounds: %+v %v", saved, err)
+			}
+			if up.balance != 50 || up.calls["refund"] != 1 {
+				t.Fatalf("refund did not execute exactly once: balance=%d calls=%d", up.balance, up.calls["refund"])
+			}
+			var pending int64
+			if err := db.Model(&model.WalletOperation{}).Where("state = ?", "pending").Count(&pending).Error; err != nil {
+				t.Fatal(err)
+			}
+			if pending != 50 {
+				t.Fatalf("failed operations were discarded instead of retained: %d pending", pending)
+			}
+		})
+	}
+}
+
+func TestSharedWalletAdminReconciliationProgressesPastRejectedRestores(t *testing.T) {
+	s, _, up, _ := newSharedWalletTest(t)
+	var ids []string
+	for i := 0; i < 51; i++ {
+		amount := int64(2 * CreditScale)
+		if i == 50 {
+			amount = CreditScale
+		}
+		order := walletTestOrder(t, s, fmt.Sprintf("restore-%02d", i), amount)
+		if err := s.MarkBillingRunning(order.ID); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.RefundBilling(order.ID, "provider failure"); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, order.ID)
+	}
+	up.balance = 0
+	for _, id := range ids {
+		if err := s.taskBilling().RestoreRefundedBilling(id, "provider-success"); err == nil {
+			t.Fatal("restore unexpectedly succeeded before topup")
+		}
+	}
+	up.balance = 1
+	for round := 0; round < 3; round++ {
+		done, err := s.ReconcileSharedWallet(context.Background(), &model.User{ID: "admin", Role: model.UserRoleAdmin})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("admin round %d restored %d orders", round+1, done)
+		if round == 0 && done != 0 {
+			t.Fatalf("first admin round exceeded its bounded restore batch: %d", done)
+		}
+	}
+	for i, id := range ids {
+		want := model.BillingStatusRefunded
+		if i == 50 {
+			want = model.BillingStatusSettled
+		}
+		saved, err := s.repo.BillingOrder(id)
+		if err != nil || saved.Status != want {
+			t.Fatalf("restore %s: want %s, got %+v %v", id, want, saved, err)
+		}
+	}
+	if up.balance != 0 {
+		t.Fatalf("later affordable restore did not charge exactly once: balance=%d", up.balance)
+	}
+}
+
 func TestSharedWalletRejectedSettlementStaysErrorOnReplay(t *testing.T) {
 	s, _, up, _ := newSharedWalletTest(t)
 	order := walletTestOrder(t, s, "reject-settle", 1000000)
@@ -551,6 +669,56 @@ func TestSharedWalletFreeProxyStillBlocksModeSwitch(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err = s.repo.SaveSharedWalletSettings(model.SharedWalletSettings{Mode: "internal"}, 2); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSharedWalletFreeProxyAllowsRecoveryDebtAndPreservesAdmission(t *testing.T) {
+	s, db, _, _ := newSharedWalletTest(t)
+	if err := s.repo.SaveSharedWalletSettings(model.SharedWalletSettings{Mode: "internal"}, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.SystemSetting{Key: "feature_availability", ValueJSON: `{"creditsEnabled":false}`}).Error; err != nil {
+		t.Fatal(err)
+	}
+	old := &model.BillingOrder{ID: "old-refunded", UserID: "member", IdempotencyKey: "old-refunded", BillingMode: "fixed_request", AmountMicrocredits: 51 * CreditScale, Status: model.BillingStatusRefunded}
+	if err := db.Create(old).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := s.repo.RestoreRefundedBillingOrder(old.ID, "provider-success"); err != nil {
+		t.Fatal(err)
+	}
+	account, err := s.repo.CreditAccount("member")
+	if err != nil || account.AvailableMicrocredits != -CreditScale {
+		t.Fatalf("recovery did not create expected debt: %+v %v", account, err)
+	}
+
+	order, err := s.ReserveProxyBilling("member", "channel", "model", "text", "test", "free-with-debt", 1)
+	if err != nil || order == nil {
+		t.Fatalf("free proxy rejected with credits disabled: %+v %v", order, err)
+	}
+	saved, err := s.repo.BillingOrder(order.ID)
+	if err != nil || saved.AmountMicrocredits != 0 || saved.Status != model.BillingStatusReserved || saved.WalletMode != "internal" {
+		t.Fatalf("free proxy lost durable admission: %+v %v", saved, err)
+	}
+	if err := s.repo.SaveSharedWalletSettings(model.SharedWalletSettings{Mode: "internal"}, 2); err == nil {
+		t.Fatal("mode switch bypassed the free proxy in flight")
+	}
+	if err := s.MarkBillingRunning(order.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SettleBilling(order.ID, "free-success"); err != nil {
+		t.Fatal(err)
+	}
+	account, err = s.repo.CreditAccount("member")
+	if err != nil || account.AvailableMicrocredits != -CreditScale || account.ReservedMicrocredits != 0 {
+		t.Fatalf("free proxy changed recovery debt: %+v %v", account, err)
+	}
+	paid := &model.BillingOrder{ID: "paid-with-debt", UserID: "member", IdempotencyKey: "paid-with-debt", BillingMode: "fixed_request", AmountMicrocredits: CreditScale, Status: model.BillingStatusReserved}
+	if err := s.repo.ReserveBillingOrder(paid); err != repository.ErrInsufficientCredits {
+		t.Fatalf("paid request bypassed insufficient funds: %v", err)
+	}
+	if err := s.repo.SaveSharedWalletSettings(model.SharedWalletSettings{Mode: "internal"}, 2); err != nil {
 		t.Fatal(err)
 	}
 }
