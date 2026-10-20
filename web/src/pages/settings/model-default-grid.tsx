@@ -29,6 +29,7 @@ const groups: Array<{
 
 export function ModelDefaultGrid({ config, onChange }: { config: AiConfig; onChange: (key: DefaultModelKey, model: string) => void }) {
     const creditsEnabled = useUserStore((state) => state.features.creditsEnabled);
+    const walletMode = useUserStore((state) => state.features.walletMode);
     return (
         <div className="space-y-1">
             {groups.map((group) => {
@@ -50,6 +51,7 @@ export function ModelDefaultGrid({ config, onChange }: { config: AiConfig; onCha
                                     const channel = resolveModelChannel(config, model);
                                     const selected = config[group.modelKey] === model;
                                     const cost = channel.modelCosts?.find((item) => item.model === modelOptionName(model));
+                                    const externalSettlement = walletMode === "external" && channel.scope === "system";
                                     return (
                                         <button
                                             key={model}
@@ -71,7 +73,11 @@ export function ModelDefaultGrid({ config, onChange }: { config: AiConfig; onCha
                                                     <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-[var(--fs-tiny)] text-foreground/45">
                                                         <span className="max-w-full truncate">{channel.scope === "system" ? "系统模型" : channel.name || "未命名渠道"}</span>
                                                         <span className="model-default-option-scope">{channel.scope === "system" ? "系统" : "自定义"}</span>
-                                                        {creditsEnabled && cost ? <span className="model-default-price">{formatPrice(cost.billingMode === "token" ? (cost.outputTokenPriceMicrocredits || 0) : cost.unitPriceMicrocredits)} /{cost.billingMode === "token" ? "百万 Token" : cost.billingMode === "per_second" ? "秒" : "次"}</span> : null}
+                                                        {creditsEnabled && cost ? (
+                                                            <span className="model-default-price" title={externalSettlement ? "以服务端报价为准，每笔账单分别向上取整" : undefined}>
+                                                                {externalSettlement ? "按整积分结算" : <>{formatPrice(cost.billingMode === "token" ? (cost.outputTokenPriceMicrocredits || 0) : cost.unitPriceMicrocredits)} /{cost.billingMode === "token" ? "百万 Token" : cost.billingMode === "per_second" ? "秒" : "次"}</>}
+                                                            </span>
+                                                        ) : null}
                                                     </span>
                                                 </span>
                                                 <span className={cn("model-default-option-check grid size-5 shrink-0 place-items-center rounded-full", selected ? "is-selected" : "text-transparent")}>

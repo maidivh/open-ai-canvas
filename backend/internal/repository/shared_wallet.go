@@ -325,7 +325,7 @@ func (r *Repository) QueueWalletOperation(id, action string, duration *int64) (*
 				if err != nil {
 					return err
 				}
-				if err = tx.Model(&order).Updates(map[string]any{"input_tokens": usage.InputTokens, "output_tokens": usage.OutputTokens, "cached_tokens": usage.CachedTokens, "usage_available": true, "usage_source": source}).Error; err != nil {
+				if err = tx.Model(&order).Updates(map[string]any{"input_tokens": usage.InputTokens, "output_tokens": usage.OutputTokens, "cached_tokens": usage.CachedTokens, "usage_available": source == billingUsageSourceProvider, "usage_source": source}).Error; err != nil {
 					return err
 				}
 				actual, err = tokenUsageAmount(order, usage)
