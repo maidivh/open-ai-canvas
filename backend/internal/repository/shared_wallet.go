@@ -17,6 +17,8 @@ import (
 
 const walletScale int64 = 1000000
 
+var ErrSharedWalletProbeMemberNotFound = errors.New("未找到匹配的共享钱包SSO会员")
+
 func WalletPoints(micro int64) (int64, error) {
 	if micro < 0 || micro > 99999999*walletScale {
 		return 0, errors.New("积分金额超出共享钱包范围")
@@ -146,7 +148,7 @@ func (r *Repository) SharedWalletProbeMember(cfg model.SharedWalletSettings) (in
 			return id, nil
 		}
 	}
-	return 0, errors.New("启用前请至少使用一个该站点的小洞会员完成免登，以验证钱包连通性")
+	return 0, ErrSharedWalletProbeMemberNotFound
 }
 
 func prepareSharedWalletAdmission(tx *gorm.DB, order *model.BillingOrder) (bool, error) {

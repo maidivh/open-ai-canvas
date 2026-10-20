@@ -201,6 +201,9 @@ func (s *Service) UpdateWalletSettings(ctx context.Context, actor *model.User, r
 		// never invents or links an account from a nickname/email.
 		member, findErr := s.repo.SharedWalletProbeMember(cfg)
 		if findErr != nil {
+			if errors.Is(findErr, repository.ErrSharedWalletProbeMemberNotFound) {
+				return nil, BadAuthRequest("未找到匹配的小洞AI登录绑定，请核对站点ID和SSO身份签发方（包括末尾斜杠）与免登配置完全一致，并至少完成一次该站点的会员免登")
+			}
 			return nil, findErr
 		}
 		if _, err = s.walletRequest(ctx, cfg, "balance", map[string]any{"site_id": cfg.SiteID, "member_id": member}); err != nil {
