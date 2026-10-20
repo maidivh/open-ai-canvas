@@ -56,6 +56,7 @@ func TestSharedWalletPHPContract(t *testing.T) {
 		`CREATE TABLE hthot_wallet_txn(id INTEGER PRIMARY KEY AUTOINCREMENT,source TEXT,site_id INTEGER,member_id INTEGER,trade_no TEXT,method_key TEXT,context TEXT,initial_point INTEGER,reserved_point INTEGER,charged_point INTEGER,refunded_point INTEGER,status TEXT,log_id INTEGER,create_time INTEGER,update_time INTEGER,UNIQUE(source,site_id,trade_no))`,
 		`CREATE TABLE hthot_wallet_operation(id INTEGER PRIMARY KEY AUTOINCREMENT,source TEXT,site_id INTEGER,member_id INTEGER,trade_no TEXT,operation_id TEXT,request_hash TEXT,result TEXT,create_time INTEGER,UNIQUE(source,site_id,operation_id))`,
 		`CREATE TABLE hthot_wallet_nonce(nonce_hash TEXT PRIMARY KEY,expires_at INTEGER)`,
+		`CREATE TABLE hthot_point_hold(id INTEGER PRIMARY KEY AUTOINCREMENT,site_id INTEGER,member_id INTEGER,submission_id TEXT,amount INTEGER,charged_point INTEGER DEFAULT 0,state TEXT,context TEXT,result TEXT,gateway_state TEXT DEFAULT '',last_error TEXT DEFAULT '',checked_at INTEGER DEFAULT 0,create_time INTEGER,update_time INTEGER,UNIQUE(site_id,member_id,submission_id))`,
 		`INSERT INTO site VALUES(7,1,0)`,
 		`INSERT INTO member VALUES(11,7,1000,1,0)`,
 	} {
@@ -143,5 +144,34 @@ func TestSharedWalletPHPContract(t *testing.T) {
 	var business *walletBusinessError
 	if !errors.As(err, &business) || business.Reason != "not_found" {
 		t.Fatalf("missing order must be a business rejection, got %v", err)
+	}
+	// A 小洞AI submission keeps its reserved funds in the authoritative ledger.
+	// Canvas must see and spend only the remainder, including after a refund.
+	if err = db.Exec(`INSERT INTO hthot_point_hold(site_id,member_id,submission_id,amount,state,context,result,create_time,update_time) VALUES(7,11,'local-pending',800,'held','{}','{}',1,1)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if result := call("balance", "", 0); result.Balance != 70 {
+		t.Fatalf("available balance must exclude local hold: %+v", result)
+	}
+	heldRequest := func(action, operation string, point int64) (walletReply, error) {
+		return svc.walletRequest(ctx, cfg, action, map[string]any{
+			"site_id": 7, "member_id": 11, "trade_no": "go-php-held", "operation_id": operation,
+			"point": point, "method_key": "video",
+		})
+	}
+	_, err = heldRequest("reserve", "hold-excess", 71)
+	business = nil
+	if !errors.As(err, &business) || business.Reason != "insufficient" {
+		t.Fatalf("Canvas must not spend frozen member point, got %v", err)
+	}
+	if result, requestErr := heldRequest("reserve", "hold-reserve", 60); requestErr != nil || result.Balance != 10 {
+		t.Fatalf("reserve available remainder: %+v, %v", result, requestErr)
+	}
+	if result, requestErr := heldRequest("refund", "hold-refund", 0); requestErr != nil || result.Balance != 70 {
+		t.Fatalf("refund must preserve local hold: %+v, %v", result, requestErr)
+	}
+	var holdAmount int64
+	if err = db.Table("hthot_point_hold").Where("submission_id = ? AND state = ?", "local-pending", "held").Select("amount").Scan(&holdAmount).Error; err != nil || holdAmount != 800 {
+		t.Fatalf("Canvas operations changed local freeze: amount=%d, %v", holdAmount, err)
 	}
 }

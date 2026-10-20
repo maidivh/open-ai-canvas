@@ -27,7 +27,9 @@ SSO 仅绑定身份。外部会员由 `cloooud` identity 的 issuer 摘要、站
 
 核账每批最多50笔，按最久未处理的账单轮转并跳过有效处理锁；凭证损坏的旧单不会永久占满每批。管理员重试余额不足的恢复操作同样轮转。该排序沿用现有持久时间戳，无新增数据库迁移。
 
-小洞AI原单退款支持已软删除账户，仍拒绝该账户的新扣费。小洞AI旧任务提交后的扣费空档尚需持久额度冻结及网关恢复方案；本轮只修复原子退款，不能据此认定所有旧任务与外部钱包的并发提交已经安全。启用生产前须在小洞AI侧解决并验收该问题。
+小洞AI原单退款支持已软删除账户，仍拒绝该账户的新扣费。小洞AI新增持久提交冻结与 `credit-hold-v1` 网关回执：提交前冻结、确认受理后正式扣费、明确未提交才释放。Canvas 的 balance、预扣和退款余额均排除小洞AI尚未结算的冻结；Canvas已有 reserve 已实际扣款，不重复纳入冻结。
+
+启用前需在小洞AI会员库新增 `hthot_point_hold`、实际 ht_api 网关库新增 `htapi_submission`，先升级网关，再统一升级所有会员扣费节点并启用提交恢复任务。旧网关不支持回执时，新本地生成会在派发前拒绝。第三方结果未知保留冻结；进程中断后的部分业务作品关联仍需依据原结果人工补录，不会自动重跑模型。迁移及预发布真实链路验收仍需在部署环境完成。
 
 恢复扣费明确因余额不足被拒绝时保留 refunded，充值后可重新恢复同一操作。超时不等同于失败退款。实际费用超过原授权进入 uncertain，不自动补扣或负债。一次账单仅允许一次 reserve/settle/refund/restore，已恢复结算后不能重放旧 refund。
 
@@ -45,4 +47,4 @@ SSO 仅绑定身份。外部会员由 `cloooud` identity 的 issuer 摘要、站
 
 `LC_ALL=C LANG=C TMPDIR=/private/tmp go test -p 1 ./... -count=1`。本次稳定源码的完整后端测试通过，未使用排除测试过滤器；显式locale解决本机Redis子进程无法启动的问题。专项测试名以 `TestSharedWallet` 开头，覆盖幂等超时、原来源恢复、预扣不足、切换、奖励、整分报价和备用线路。
 
-可选跨语言测试 `TestSharedWalletPHPContract` 需设置 `CANVAS_WALLET_PHP_FIXTURE` 为 ai_cloooud 的 `tests/fixtures/shared_wallet_http_router.php`，`SHARED_WALLET_PHP` 为 PHP 8 可执行文件；使用临时 SQLite 和本地 HTTP，不读取生产账户或调用真实扣费。
+可选跨语言测试 `TestSharedWalletPHPContract` 需设置 `CANVAS_WALLET_PHP_FIXTURE` 为 ai_cloooud 的 `tests/fixtures/shared_wallet_http_router.php`，`SHARED_WALLET_PHP` 为 PHP 8 可执行文件；使用临时 SQLite 和本地 HTTP，不读取生产账户或调用真实扣费。已补充冻结可用额、侵占冻结被拒绝和退款保持冻结的验证；此合同无需修改 Canvas 正式计费接口。
