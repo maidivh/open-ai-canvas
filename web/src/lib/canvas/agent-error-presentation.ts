@@ -1,5 +1,6 @@
 import { ApiError } from "@/services/api/request";
 import { AgentStreamError } from "@/services/api/agent";
+import { normalizeCreditFailureMessage } from "@/lib/generation-error";
 
 export function agentErrorPresentation(cause: unknown, fallback = "Agent 执行失败") {
     const text = typeof cause === "string" ? cause.trim() : cause instanceof Error ? cause.message : fallback;
@@ -17,13 +18,13 @@ export function agentErrorPresentation(cause: unknown, fallback = "Agent 执行�
         };
     }
     // 渠道、鉴权、配额等业务错误保留真实语义，不能按 message 猜测为服务未部署。
-    return { title: fallback, text: text || fallback };
+    return { title: fallback, text: normalizeCreditFailureMessage(text || fallback) };
 }
 
 export function agentErrorContent(text: string, title: string) {
     // 只拆分服务端公开提示中的诊断尾注，不据此推断错误类型或改变业务语义。
     const diagnostic = text.trim().match(/^([\s\S]*?)；如反复出现，请把诊断号\s+([a-zA-Z0-9:_-]+)\s+反馈给管理员[。.]?$/);
-    const description = (diagnostic?.[1] ?? text).trim();
+    const description = normalizeCreditFailureMessage((diagnostic?.[1] ?? text).trim());
     return { description: description === title.trim() ? "" : description, diagnosticId: diagnostic?.[2] };
 }
 

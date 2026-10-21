@@ -38,7 +38,7 @@ func userFacingTaskError(raw string) string {
 }
 
 func classifyUserFacingTaskError(raw string) string {
-	raw = strings.TrimSpace(raw)
+	raw = normalizeCreditFailureMessage(strings.TrimSpace(raw))
 	if raw == "" {
 		return taskErrorDefaultMessage
 	}
@@ -138,10 +138,10 @@ func cloudAgentUserFailureMessage(runID string, cause error) string {
 	}
 	var appErr *AppError
 	if errors.As(cause, &appErr) && appErr != nil && cloudAgentReadableMessage(appErr.Message) {
-		return strings.TrimSpace(appErr.Message)
+		return normalizeCreditFailureMessage(strings.TrimSpace(appErr.Message))
 	}
 	if message := cloudAgentInnermostMessage(cause); cloudAgentReadableMessage(message) {
-		return message
+		return normalizeCreditFailureMessage(message)
 	}
 	log.Printf("[Agent] internal failure run=%s: %v", runID, cause)
 	return "Agent 执行中断，请重新发送消息；如反复出现，请把诊断号 " + runID + " 反馈给管理员"

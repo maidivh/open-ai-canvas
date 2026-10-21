@@ -30,6 +30,15 @@ test("specific business failures and recovery guidance remain visible and are es
     expect(html).not.toContain("<details");
 });
 
+test("cached wallet failures show their historical internal wallet source in both themes", () => {
+    for (const theme of [canvasThemes.light, canvasThemes.dark]) {
+        const html = renderToStaticMarkup(<AgentChatMessage item={{ ...error, text: "积分不足，请先使用兑换码充值" }} theme={theme} />);
+        expect(html).toContain("该次请求");
+        expect(html).toContain("内部积分不足");
+        expect(html).not.toContain("兑换码");
+    }
+});
+
 test("retry stays disabled while retrying and warnings retain a distinct tone", () => {
     const html = renderToStaticMarkup(<AgentChatMessage item={{ ...error, errorSeverity: "warning" }} theme={canvasThemes.dark} onRetry={() => {}} retrying />);
     expect(html).toContain("agent-status-message--warning");

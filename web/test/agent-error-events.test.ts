@@ -51,6 +51,15 @@ test("separate failed runs are not deduplicated by identical text", () => {
     expect(messages[0].id).not.toBe(messages[1].id);
 });
 
+test("historical wallet failures are normalized when run events are replayed", () => {
+    for (const item of [event("run_failed", { text: "积分不足，请先使用兑换码充值" }), event("run_status", { status: "failed", failureMessage: "积分不足，请先充值" })]) {
+        const messages = reduceEvents([item]);
+        expect(messages[0].text).toContain("该次请求");
+        expect(messages[0].text).toContain("内部积分不足");
+        expect(messages[0].text).not.toContain("兑换码");
+    }
+});
+
 test("a failed snapshot without a reason still appears but never replaces a specific reason", () => {
     const emptyStatus = event("run_status", { status: "failed" });
     expect(reduceEvents([emptyStatus])).toHaveLength(1);

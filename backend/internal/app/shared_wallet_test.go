@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -454,8 +455,17 @@ func TestSharedWalletRestoredOrderCannotReplayOldRefund(t *testing.T) {
 func TestSharedWalletRejectedReserveDoesNotInventRefund(t *testing.T) {
 	s, _, up, _ := newSharedWalletTest(t)
 	o := walletTestOrder(t, s, "insufficient", 101000000)
-	if err := s.MarkBillingRunning(o.ID); err == nil {
+	err := s.MarkBillingRunning(o.ID)
+	if err == nil {
 		t.Fatal("insufficient funds admitted")
+	}
+	var rejected *walletBusinessError
+	if !errors.As(err, &rejected) || rejected.Reason != "insufficient" || !strings.Contains(err.Error(), "外部钱包") || strings.Contains(err.Error(), "insufficient") {
+		t.Fatalf("external rejection lost its machine reason or user-facing wallet source: %v", err)
+	}
+	var public *AppError
+	if !errors.As(err, &public) || public.Status != 403 || public.Code != CodeQuotaExceeded || public.Reason != ReasonQuotaExceeded || public.Message != err.Error() {
+		t.Fatalf("synchronous proxy would hide the rejected balance as an internal error: %v", err)
 	}
 	if err := s.RefundBilling(o.ID, "preparation failed"); err != nil {
 		t.Fatal(err)

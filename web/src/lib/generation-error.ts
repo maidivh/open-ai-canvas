@@ -14,6 +14,9 @@ const NETWORK_ERROR_MESSAGE = "网络异常。";
 const MODEL_CAPABILITY_ERROR_MESSAGE = "所选模型不支持当前生成方式或输入，请切换模型或调整输入后重试。";
 const MODEL_PARAMETER_ERROR_MESSAGE = "当前模型不支持这组参数或参考素材，请调整输入或切换模型后重试。";
 const MODEL_SERVICE_ERROR_MESSAGE = "模型服务处理失败，请稍后重试或换用其他模型。";
+const INTERNAL_CREDITS_FAILURE_MESSAGE = "该次请求因内部积分不足而失败。请在积分中心核对当前扣费模式、可用余额和报价后重新提交。";
+const INTERNAL_ROUTE_CREDITS_FAILURE_MESSAGE = "该次请求尝试切换供应线路时报价上涨，因内部积分不足而失败。请在积分中心核对当前扣费模式、可用余额和报价后重新提交。";
+const EXTERNAL_CREDITS_FAILURE_MESSAGE = "外部钱包可用积分不足，该次扣费操作未完成。请在积分中心核对最新余额、预扣金额和订单状态。";
 
 const REASON_MESSAGES: Record<string, string> = {
     model_price_not_configured: "当前模型暂未配置价格，请换用其他模型或联系管理员。",
@@ -21,7 +24,6 @@ const REASON_MESSAGES: Record<string, string> = {
     provider_request_failed: MODEL_SERVICE_ERROR_MESSAGE,
     model_catalog_mismatch: "模型配置已更新，请重新选择模型后再试。",
     invalid_model_selection: "模型选择无效，请重新选择模型后再试。",
-    quota_exceeded: "积分或额度不足，请充值后再试。",
     rate_limited: "请求过于频繁，请稍后再试。",
     timeout: "模型服务响应超时，请稍后再试。",
     bad_gateway: "模型服务暂时不可用，请稍后再试。",
@@ -74,8 +76,12 @@ export function generationErrorMessage(error: unknown) {
     }
     const raw = sanitizeUserVisibleError(original);
     if (isContentModerationError(raw)) return contentModerationMessage(raw);
-
     const reason = structuredErrorReason(error);
+    if (!reason || reason === "invalid_argument") {
+        const creditMessage = normalizeCreditFailureMessage(raw);
+        if (creditMessage !== raw) return creditMessage;
+    }
+    if (reason === "quota_exceeded") return raw || "账号配额不足，请检查对应额度后重试。";
     if (reason === "model_capability_not_supported") return MODEL_CAPABILITY_ERROR_MESSAGE;
     if (reason === "invalid_argument" && isModelCapabilityFailure(raw)) return MODEL_CAPABILITY_ERROR_MESSAGE;
     if (reason === "invalid_argument" && isModelParameterFailure(raw)) return MODEL_PARAMETER_ERROR_MESSAGE;
@@ -99,6 +105,22 @@ export function generationErrorMessage(error: unknown) {
     if (keepsProviderDetail(displayMessage)) return displayMessage;
     if (isTechnicalProviderMessage(displayMessage)) return MODEL_SERVICE_ERROR_MESSAGE;
     return displayMessage || DEFAULT_GENERATION_ERROR_MESSAGE;
+}
+
+// 已保存的旧失败记录只转换展示文案，不按当前钱包模式改写原扣费来源或重试任务。
+export function normalizeCreditFailureMessage(raw: string) {
+    switch (raw) {
+        case "积分不足，请先使用兑换码充值":
+        case "积分不足，请充值后重试":
+        case "积分不足，请先充值":
+            return INTERNAL_CREDITS_FAILURE_MESSAGE;
+        case "共享钱包拒绝操作：insufficient":
+            return EXTERNAL_CREDITS_FAILURE_MESSAGE;
+        case "模型服务价格发生变化，当前积分余额不足":
+            return INTERNAL_ROUTE_CREDITS_FAILURE_MESSAGE;
+        default:
+            return raw;
+    }
 }
 
 function contentModerationMessage(raw: string) {

@@ -20,6 +20,26 @@ import (
 
 const CreditScale int64 = 1_000_000
 
+const (
+	internalCreditsFailureMessage      = "该次请求因内部积分不足而失败。请在积分中心核对当前扣费模式、可用余额和报价后重新提交。"
+	internalRouteCreditsFailureMessage = "该次请求尝试切换供应线路时报价上涨，因内部积分不足而失败。请在积分中心核对当前扣费模式、可用余额和报价后重新提交。"
+	externalCreditsFailureMessage      = "外部钱包可用积分不足，该次扣费操作未完成。请在积分中心核对最新余额、预扣金额和订单状态。"
+)
+
+// 只归一化历史错误的展示，不用当前钱包配置推断旧请求的扣费来源。
+func normalizeCreditFailureMessage(raw string) string {
+	switch raw {
+	case "积分不足，请先使用兑换码充值", "积分不足，请充值后重试", "积分不足，请先充值":
+		return internalCreditsFailureMessage
+	case "共享钱包拒绝操作：insufficient":
+		return externalCreditsFailureMessage
+	case "模型服务价格发生变化，当前积分余额不足":
+		return internalRouteCreditsFailureMessage
+	default:
+		return raw
+	}
+}
+
 type WalletSummary struct {
 	WalletMode  string                    `json:"walletMode"`
 	RechargeURL string                    `json:"rechargeUrl"`
@@ -617,7 +637,7 @@ func (s *Service) ReserveProxyBillingWithBody(userID string, channelID string, m
 	}
 	if err := s.repo.ReserveBillingOrder(order); err != nil {
 		if errors.Is(err, repository.ErrInsufficientCredits) {
-			return nil, BadAuthRequest("积分不足，请先使用兑换码充值")
+			return nil, BadAuthRequest(internalCreditsFailureMessage)
 		}
 		return nil, err
 	}

@@ -253,7 +253,20 @@ type walletReply struct {
 }
 type walletBusinessError struct{ Reason string }
 
-func (e *walletBusinessError) Error() string { return "共享钱包拒绝操作：" + e.Reason }
+func (e *walletBusinessError) Error() string {
+	if e.Reason == "insufficient" {
+		return externalCreditsFailureMessage
+	}
+	return "共享钱包拒绝操作：" + e.Reason
+}
+
+// 同步模型代理通过 AppError 投影公开原因；保留外层类型与 Reason 供核账状态机判断。
+func (e *walletBusinessError) Unwrap() error {
+	if e.Reason == "insufficient" {
+		return QuotaExceeded(externalCreditsFailureMessage)
+	}
+	return nil
+}
 
 func walletSignature(secret, path, ts, nonce string, body []byte) string {
 	mac := hmac.New(sha256.New, []byte(secret))

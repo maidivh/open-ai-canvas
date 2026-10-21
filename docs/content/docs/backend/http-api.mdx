@@ -464,6 +464,8 @@ CSV 使用中文表头、UTF-8 BOM、CRLF；金额按整数分精确转换为两
 
 模型错误把已有字符串码放进 `reason`（如 `model_capability_not_supported`），`code` 仍为 400。
 
+同步系统模型代理被外部钱包明确以 `insufficient` 拒绝预扣时，返回 `403 / 40301 / quota_exceeded`，`msg` 明确为外部钱包可用积分不足；不再包装成通用 500。前端保留该安全文案及素材等其他配额错误的具体限制，不把所有 `quota_exceeded` 统一解释成需要充值。此错误不表示已经退款，订单结果以原账单状态为准。
+
 常量：后端标准原因定义在 `backend/internal/kernel/error_codes.go`，由 `app` 和 `service` 兼容导出；前端业务模块按 `ApiError.reason` 分支。
 
 ## 技能库分类 API

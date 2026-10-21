@@ -34,7 +34,7 @@ func (s *Service) cloudAgentExecutionOutput(task *model.Task, initial cloudAgent
 	}
 	out := agentRunOutput(task, initial)
 	out.Status = run.Status
-	out.Revision, out.CleanupPending, out.FailureMessage = run.Revision, run.CleanupPending, run.FailureMessage
+	out.Revision, out.CleanupPending, out.FailureMessage = run.Revision, run.CleanupPending, normalizeCreditFailureMessage(run.FailureMessage)
 	out.UpdatedAt = run.UpdatedAt
 	view := CloudAgentRunViewOptions{}
 	if len(options) > 0 {

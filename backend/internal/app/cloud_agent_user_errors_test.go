@@ -67,7 +67,7 @@ func TestCloudAgentUserFailureMessageHidesInternalEnglish(t *testing.T) {
 	if got := cloudAgentUserFailureMessage("run-1", readable); got != "图片生成失败：网络异常。" {
 		t.Fatalf("readable reason lost: %q", got)
 	}
-	if got := cloudAgentUserFailureMessage("run-1", fmt.Errorf("x: %w", repository.ErrInsufficientCredits)); got != "积分不足，请先充值" {
+	if got := cloudAgentUserFailureMessage("run-1", fmt.Errorf("x: %w", repository.ErrInsufficientCredits)); got != "该次请求因内部积分不足而失败。请在积分中心核对当前扣费模式、可用余额和报价后重新提交。" {
 		t.Fatalf("insufficient credits not localized: %q", got)
 	}
 }
