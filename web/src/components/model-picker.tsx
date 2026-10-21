@@ -253,6 +253,7 @@ export function ModelPicker({
                                             requirements={requirements}
                                             showPrice={showOptionPrices && creditsEnabled}
                                             walletMode={walletMode}
+                                            quote={walletMode === "external" && displayModel === current ? routeQuote : undefined}
                                             disabledReason={disabledReason}
                                             showDescription
                                         />
@@ -344,6 +345,7 @@ export function ModelLabel({
     disabledReason,
     showDescription,
     walletMode,
+    quote,
 }: {
     config: AiConfig;
     model: string;
@@ -357,10 +359,13 @@ export function ModelLabel({
     disabledReason?: string;
     showDescription: boolean;
     walletMode?: "internal" | "external";
+    quote?: LogicalModelQuote;
 }) {
     const meta = modelMenuMeta(model, capability);
     const channel = resolveModelChannel(config, model);
     const logicalCost = channel.modelCosts?.find((item) => item.model === modelOptionName(model));
+    const menuPrice = showPrice ? modelMenuPrice(config, model, capability, true, requirements, walletMode) : undefined;
+    const referencePrice = walletMode === "external" && channel.scope === "system" && !quote && menuPrice != null;
     const logicalSpec = logicalCost?.logicalCapabilitySpec;
     const videoProfile = capability === "video" ? modelCapabilityConfigFor(config, model).video : undefined;
     const capabilityTag = videoReferenceCapabilityTag(videoProfile?.references);
@@ -378,9 +383,10 @@ export function ModelLabel({
                 <span className="canvas-model-picker-option-heading">
                     <span className="canvas-model-picker-option-name text-[var(--fs-label)] font-medium leading-none" title={label || pickerModelDisplayName(config, model, showConfiguredModelName)}>{label || pickerModelDisplayName(config, model, showConfiguredModelName)}</span>
                     {showPrice ? (
-                        <span className="canvas-model-picker-option-price">
-                            {/* 候选模型展示自身价目；当前参数的精确报价只在选中后的触发器显示。 */}
-                            <ModelPrice price={modelMenuPrice(config, model, capability, true, requirements, walletMode)} />
+                        <span className="canvas-model-picker-option-price" title={referencePrice ? "参考单价，非本次扣费金额；以服务端报价为准，每笔账单分别向上取整" : undefined}>
+                            {/* 外部钱包选中项复用服务端报价，其他候选项保留参考费率，不在客户端推算整单金额。 */}
+                            {referencePrice ? "参考单价 " : null}
+                            <ModelPrice price={menuPrice} quote={quote} walletMode={walletMode} />
                         </span>
                     ) : null}
                     <ModelAvailabilityBadge availability={modelAvailability(config, model)} available={logicalCost?.available ?? true} showAvailability={channel.scope === "system"} />
@@ -466,7 +472,7 @@ function modelMenuPrice(config: AiConfig, model: string, capability?: ModelCapab
     const channel = resolveModelChannel(config, model);
     const cost = channel.modelCosts?.find((item) => item.model === modelOptionName(model));
     if (!cost) return channel.scope === "system" ? null : undefined;
-    if (walletMode === "external" && channel.scope === "system") return cost.pricePolicy === "channel" && !cost.logicalPriceTiers?.length ? null : { kind: "estimate", label: "按整积分结算", title: "以服务端报价为准，每笔账单分别向上取整" };
+    if (walletMode === "external" && channel.scope === "system" && !summary) return cost.pricePolicy === "channel" && !cost.logicalPriceTiers?.length ? null : { kind: "estimate", label: "按整积分结算", title: "以服务端报价为准，每笔账单分别向上取整" };
     if (cost.pricePolicy === "channel") {
         const tiers = cost.logicalPriceTiers || [];
         if (!tiers.length) return null;

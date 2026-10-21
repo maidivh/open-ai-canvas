@@ -39,11 +39,43 @@ function fixture() {
     return normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [channel], model: "comfy::h3-multi", videoModel: "comfy::h3-multi" } }).config;
 }
 
-test("external model rows avoid unrounded per-request prices before a server quote", () => {
+test("external model rows retain reference rates and disclose per-order rounding", () => {
     const config = fixture();
     const markup = renderToStaticMarkup(<ModelLabel config={config} model={config.model} capability="video" walletMode="external" theme={canvasThemes.dark} creationVariant showConfiguredModelName={false} showPrice showDescription />);
-    expect(markup).toContain("按整积分结算");
-    expect(markup).not.toContain("0.1-0.2 积分/秒");
+    expect(markup).toContain("参考单价");
+    expect(markup).toContain("0.1-0.2 积分/秒");
+    expect(markup).toContain("每笔账单分别向上取整");
+});
+
+test("external image rows show numeric reference prices without treating them as final charges", () => {
+    const config = fixture();
+    const cost = config.channels[0].modelCosts![0];
+    cost.billingMode = "fixed_request";
+    cost.logicalPriceTiers!.forEach((tier) => { tier.billingMode = "fixed_request"; });
+    for (const theme of [canvasThemes.light, canvasThemes.dark]) {
+        const markup = renderToStaticMarkup(<ModelLabel config={config} model={config.model} capability="image" walletMode="external" theme={theme} creationVariant showConfiguredModelName={false} showPrice showDescription />);
+        expect(markup).toContain("参考单价");
+        expect(markup).toContain("0.1-0.2 积分");
+        expect(markup).not.toContain("本次消耗");
+    }
+});
+
+test("selected external model rows show the server-rounded quote instead of reference rates", () => {
+    const config = fixture();
+    for (const amount of [0, 22_000_000]) {
+        const markup = renderToStaticMarkup(<ModelLabel config={config} model={config.model} capability="video" walletMode="external" theme={canvasThemes.light} creationVariant showConfiguredModelName={false} showPrice showDescription quote={{ logicalModelId: "", billingMode: "per_second", quantity: 6, amountMicrocredits: amount, estimated: false }} />);
+        expect(markup).toContain(`本次消耗 ${amount === 0 ? "0" : "22"} 积分`);
+        expect(markup).not.toContain("参考单价");
+        expect(markup).not.toContain("0.1-0.2 积分/秒");
+    }
+});
+
+test("external model rows keep missing prices explicit", () => {
+    const config = fixture();
+    config.channels[0].modelCosts![0].logicalPriceTiers = [];
+    const markup = renderToStaticMarkup(<ModelLabel config={config} model={config.model} capability="video" walletMode="external" theme={canvasThemes.light} creationVariant showConfiguredModelName={false} showPrice showDescription />);
+    expect(markup).toContain("未配置");
+    expect(markup).not.toContain("参考单价");
 });
 
 test("user channel models never inherit the platform external-wallet settlement label", () => {
