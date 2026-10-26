@@ -334,13 +334,21 @@ func (r *Repository) QueueWalletOperation(id, action string, duration *int64) (*
 				if err != nil {
 					return err
 				}
-			} else if order.BillingMode == "per_second" && order.Capability == "audio" {
+			} else if order.BillingMode == "per_second" && (order.Capability == "audio" || (order.Capability == "video" && duration != nil)) {
 				if duration == nil || *duration <= 0 {
-					return errors.New("音频实际时长不可用")
+					return errors.New("按秒结算缺少有效的媒体时长")
 				}
+				quantity := (*duration + 999) / 1000
 				var err error
-				actual, err = audioBillingAmount(order.UnitPriceMicrocredits, (*duration+999)/1000, order.MultiplierBasisPoints)
+				actual, err = audioBillingAmount(order.UnitPriceMicrocredits, quantity, order.MultiplierBasisPoints)
 				if err != nil {
+					return err
+				}
+				updates := map[string]any{"quantity": quantity}
+				if order.CostBillingMode == "per_second" {
+					updates["cost_quantity"] = quantity
+				}
+				if err := tx.Model(&order).Updates(updates).Error; err != nil {
 					return err
 				}
 			}

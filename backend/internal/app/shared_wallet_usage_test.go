@@ -1,10 +1,91 @@
 package app
 
 import (
+	"fmt"
 	"testing"
 
 	"yingce/backend/internal/model"
 )
+
+func TestSharedWalletVideoProcessingSettlesMeasuredDuration(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		processing  bool
+		seconds     float64
+		wantPoints  int64
+		wantSeconds int64
+		wantError   bool
+	}{
+		{name: "shorter output refunds difference", processing: true, seconds: 2.5, wantPoints: 5, wantSeconds: 3},
+		{name: "full output retains reservation", processing: true, seconds: 10, wantPoints: 15, wantSeconds: 10},
+		{name: "overrun requires review", processing: true, seconds: 11, wantError: true},
+		{name: "missing duration requires review", processing: true, wantError: true},
+		{name: "ordinary generation retains requested duration", seconds: 2.5, wantPoints: 15, wantSeconds: 10},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s, db, upstream, user := newSharedWalletTest(t)
+			order := &model.BillingOrder{
+				ID: "video-duration", UserID: user.ID, IdempotencyKey: "video-duration", Capability: "video", BillingMode: "per_second",
+				Quantity: 10, UnitPriceMicrocredits: 1250000, MultiplierBasisPoints: 12000,
+				BillingCostSnapshot: model.BillingCostSnapshot{CostBillingMode: "per_second", CostQuantity: 10},
+				AmountMicrocredits:  15000000, Status: model.BillingStatusReserved,
+			}
+			if err := s.repo.ReserveBillingOrder(order); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.MarkBillingRunning(order.ID); err != nil {
+				t.Fatal(err)
+			}
+			task := model.Task{
+				UserID: user.ID, Type: "video", BillingOrderID: order.ID,
+				InputJSON:  fmt.Sprintf(`{"metadata":{"videoProcessing":%t}}`, test.processing),
+				ResultJSON: fmt.Sprintf(`{"usage":{"outputDurationSeconds":%g}}`, test.seconds),
+			}
+			for range 2 {
+				handled, err := s.settleVideoProcessingBilling(task, "provider-video")
+				if handled != test.processing {
+					t.Fatalf("handled=%v, want %v", handled, test.processing)
+				}
+				if !handled && err == nil {
+					err = s.SettleBilling(order.ID, "provider-video")
+				}
+				if (err != nil) != test.wantError {
+					t.Fatalf("settlement error=%v, wantError=%v", err, test.wantError)
+				}
+			}
+			saved, err := s.repo.BillingOrder(order.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.wantError {
+				if saved.Status == model.BillingStatusSettled || upstream.calls["settle"] != 0 || upstream.balance != 85 {
+					t.Fatalf("invalid output settled: status=%s calls=%d balance=%d", saved.Status, upstream.calls["settle"], upstream.balance)
+				}
+				if saved.Quantity != 10 || saved.CostQuantity != 10 {
+					t.Fatalf("rejected settlement changed quantities: quantity=%d cost=%d", saved.Quantity, saved.CostQuantity)
+				}
+				var operations int64
+				if err := db.Model(&model.WalletOperation{}).Where("billing_order_id = ? AND action = ?", order.ID, "settle").Count(&operations).Error; err != nil || operations != 0 {
+					t.Fatalf("rejected settlement created an intent: count=%d err=%v", operations, err)
+				}
+				return
+			}
+			if saved.Status != model.BillingStatusSettled || saved.ActualAmountMicrocredits != test.wantPoints*CreditScale || saved.RefundedAmountMicrocredits != (15-test.wantPoints)*CreditScale {
+				t.Fatalf("unexpected settlement: status=%s actual=%d refund=%d", saved.Status, saved.ActualAmountMicrocredits, saved.RefundedAmountMicrocredits)
+			}
+			if upstream.balance != 100-test.wantPoints || upstream.calls["settle"] != 1 {
+				t.Fatalf("settlement not idempotent: balance=%d calls=%d", upstream.balance, upstream.calls["settle"])
+			}
+			if saved.Quantity != test.wantSeconds || saved.CostQuantity != test.wantSeconds {
+				t.Fatalf("billing quantities do not match output: quantity=%d cost=%d want=%d", saved.Quantity, saved.CostQuantity, test.wantSeconds)
+			}
+			account, err := s.repo.CreditAccount(user.ID)
+			if err != nil || account.AvailableMicrocredits != 50000000 {
+				t.Fatalf("external settlement changed internal balance: account=%+v err=%v", account, err)
+			}
+		})
+	}
+}
 
 func TestSharedWalletVideoTokenSettlementRecordsUsageSource(t *testing.T) {
 	for _, action := range []string{"settle", "restore"} {

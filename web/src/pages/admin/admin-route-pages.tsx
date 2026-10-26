@@ -11,6 +11,7 @@ import { getAdminWalletSettings, type WalletSettings } from "@/services/api/wall
 import { invalidateAuthSessionCache } from "@/services/api/auth";
 import { refreshFeatureAvailability } from "@/services/feature-availability";
 import { useUserStore } from "@/stores/use-user-store";
+import { BillingAutoRefundToggle } from "./components/billing-auto-refund-toggle";
 
 const AnalyticsPanel = lazy(() => import("./components/analytics-panel"));
 const AdminAnnouncementsPanel = lazy(() => import("./components/admin-announcements-panel"));
@@ -106,6 +107,7 @@ export function CreditOperationsPage() {
                     <Button icon={<Settings2 className="size-4" />} onClick={() => setWalletSettingsOpen(true)}>
                         扣费模式{settings.data ? ` · ${settings.data.mode === "external" ? "小洞AI" : "内部"}` : ""}
                     </Button>
+                    <BillingAutoRefundToggle />
                     <Button icon={<Settings2 className="size-4" />} onClick={() => setActiveOperation("policy")}>
                         积分策略
                     </Button>
