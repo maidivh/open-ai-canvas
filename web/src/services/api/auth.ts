@@ -6,6 +6,7 @@ import type { FeatureAvailability } from "@/stores/use-user-store";
 import { http, apiBaseURL } from "@/services/api/request";
 import type { OSSConnectionTestInput, OSSConnectionTestResult, OSSProvider, S3Preset } from "@/lib/oss-settings";
 import type { VerificationPolicy } from "./verification";
+import type { AccountFileStorageUsage } from "@/services/api/resources";
 
 let authSessionRequest: Promise<AuthSessionPayload> | null = null;
 let authSessionCache: { payload: AuthSessionPayload; expiresAt: number } | null = null;
@@ -30,6 +31,7 @@ export type LocalUser = {
     identityUsername?: string;
     role: "admin" | "user";
     status: "active" | "disabled";
+    isPromoter?: boolean;
     lastLoginAt?: string;
     createdAt: string;
     updatedAt: string;
@@ -45,6 +47,8 @@ export type AuthSessionPayload = {
     runtimeLimits?: RuntimeLimits;
     drawingEngine?: CanvasDrawingEngineSetting;
     features?: FeatureAvailability;
+    /** 当前账号能否进入推广中心；由后台推广设置和推广人标记共同决定。 */
+    referralAvailable?: boolean;
 };
 
 export type RuntimeLimits = {
@@ -71,7 +75,7 @@ export type ApiCallLog = {
     source: string;
     capability: "text" | "image" | "video" | "audio" | "";
     operation?: string;
-    requestKind: "create" | "poll" | "download" | "upload" | "local_save" | "register" | "repair" | "";
+    requestKind: "create" | "poll" | "download" | "upload" | "local_save" | "local_fallback" | "offload" | "register" | "repair" | "";
     billable: boolean;
     apiFormat: string;
     method: string;
@@ -141,6 +145,8 @@ export type AdminUserDetail = {
     storedFileBytes: number;
     dailyUploadBytes: number;
     quota: RuntimeResourcePolicy;
+    /** 包含已购扩容的有效容量与超额状态。 */
+    storageCapacity: AccountFileStorageUsage;
 };
 
 export type AdminUserTask = {
@@ -471,7 +477,7 @@ export function resetPassword(input: { email: string; emailCode: string; passwor
     return http.post<{ reset: boolean }>("/auth/password-reset", input);
 }
 
-export async function register(input: { username: string; email?: string; emailCode?: string; phone?: string; smsCode?: string; ticket?: string; displayName?: string; password: string; acceptedTerms: boolean }) {
+export async function register(input: { username: string; email?: string; emailCode?: string; phone?: string; smsCode?: string; ticket?: string; displayName?: string; password: string; acceptedTerms: boolean; referralCode?: string }) {
     const result = await http.post<{ user: LocalUser }>("/auth/register", input);
     invalidateAuthSessionCache();
     return result;
@@ -513,7 +519,7 @@ export function listAdminUserAuditEvents(id: string, params: { page?: number; pa
     return http.get<{ events: AdminAuditEvent[]; total: number; page: number; pageSize: number }>(`/admin/users/${encodeURIComponent(id)}/audit-events`, { params });
 }
 
-export function updateAdminUser(id: string, input: Partial<Pick<LocalUser, "displayName" | "email" | "role" | "status">> & { password?: string }) {
+export function updateAdminUser(id: string, input: Partial<Pick<LocalUser, "displayName" | "email" | "role" | "status" | "isPromoter">> & { password?: string }) {
     return http.patch<{ user: LocalUser }>(`/admin/users/${encodeURIComponent(id)}`, input);
 }
 
@@ -647,6 +653,10 @@ export function recoverAdminApiLogVideoByURL(id: string, url: string, providerRe
     return http.post<AdminProviderTaskQueryResult>(`/admin/api-logs/${encodeURIComponent(id)}/recover-url`, { url, providerRequestId }, { timeout: 120_000 });
 }
 
+/** 重新保存“作品已生成但保存失败”的任务。订单已退款时必须选择补扣（charge）或免除（waive）。 */
+export function recoverAdminApiLogTaskMedia(id: string, refundedBilling?: "charge" | "waive") {
+    return http.post<{ task: GenerationTask }>(`/admin/api-logs/${encodeURIComponent(id)}/recover-media`, refundedBilling ? { refundedBilling } : undefined);
+}
 export function batchRecoverAdminApiLogs(ids: string[]) {
     return http.post<{ items: Array<{ logId: string; recovered: boolean; providerStatus?: string; error?: string }>; success: number; failed: number; skipped: number }>("/admin/api-logs/recover-batch", { ids }, { timeout: 180_000 });
 }

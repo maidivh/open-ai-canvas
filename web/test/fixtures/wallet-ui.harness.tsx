@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
 import { Window } from "happy-dom";
 import type { AxiosRequestConfig } from "axios";
 import type { WalletSettings, WalletSummary } from "../../src/services/api/wallet";
+import type { PaymentOrder, TopupProduct } from "../../src/services/api/payments";
 
 const dom = new Window({ url: "http://localhost/" });
 const originals = new Map<string, PropertyDescriptor | undefined>();
@@ -12,6 +13,8 @@ for (const [key, value] of Object.entries({ window: dom, document: dom.document,
 const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { App, ConfigProvider } = await import("antd");
+const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
+const { MemoryRouter } = await import("react-router");
 const { WorkspaceWalletModal } = await import("../../src/components/layout/workspace-wallet-modal");
 const { WalletSettingsDrawer } = await import("../../src/pages/admin/components/wallet-settings-drawer");
 const { useUserStore, defaultFeatureAvailability } = await import("../../src/stores/use-user-store");
@@ -25,11 +28,18 @@ let calls: AxiosRequestConfig[] = [];
 let currentWallet = external;
 let currentSettings: WalletSettings = settings;
 let failWallet = false;
+let failCatalog = false;
+let products: TopupProduct[] = [];
+let order: PaymentOrder;
 let root: ReturnType<typeof createRoot> | undefined;
 let host: HTMLDivElement | undefined;
+let client: InstanceType<typeof QueryClient>;
 
 beforeEach(() => {
-    calls = []; failWallet = false; currentWallet = external; currentSettings = settings;
+    calls = []; failWallet = false; failCatalog = false; currentWallet = external; currentSettings = settings;
+    products = [];
+    order = { id: "order", merchantOrderNo: "merchant", productId: "storage", productName: "存储扩容", productKind: "storage", providerId: "test", amountFen: 100, currency: "CNY", creditsMicrocredits: 0, storageBytes: 1024, storageDurationDays: 30, status: "created", checkout: { mode: "" }, expiresAt: "2099-01-01T00:00:00Z", createdAt: "", updatedAt: "" };
+    client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     useUserStore.getState().setUser({ id: "member", username: "member", displayName: "Member", role: "admin", status: "active" });
     useUserStore.getState().setFeatures({ ...defaultFeatureAvailability, walletMode: "external", rechargeUrl: external.rechargeUrl });
     apiClient.defaults.adapter = async (config) => {
@@ -38,8 +48,14 @@ beforeEach(() => {
         if (config.url === "/wallet") {
             if (failWallet) throw new Error("小洞AI暂时无法连接");
             data = currentWallet;
-        } else if (config.url === "/payments/products") data = { products: [] };
-        else if (config.url === "/payments/providers") data = { providers: [] };
+        } else if (config.url === "/resources/storage-usage") data = { usage: { usedBytes: 0, totalBytes: 1024 } };
+        else if (config.url === "/resources/storage-grants") data = { grants: [] };
+        else if (config.url === "/payments/products") {
+            if (failCatalog) throw new Error("套餐暂时无法读取");
+            data = { products };
+        }
+        else if (config.url === "/payments/providers") data = { providers: [{ id: "test", name: "测试支付", enabled: true, pluginEnabled: true, configured: true }] };
+        else if (config.url === "/payments/orders" || config.url === "/payments/orders/order") data = { order };
         else if (config.url === "/admin/wallet-settings") {
             if (config.method === "put") {
                 const body = JSON.parse(config.data);
@@ -53,21 +69,69 @@ beforeEach(() => {
     };
     host = document.createElement("div"); document.body.append(host); root = createRoot(host);
 });
-afterEach(async () => { if (root) await act(async () => root!.unmount()); host?.remove(); root = undefined; });
+afterEach(async () => { if (root) await act(async () => root!.unmount()); client.clear(); host?.remove(); root = undefined; });
 afterAll(() => { apiClient.defaults.adapter = originalAdapter; dom.happyDOM.abort(); for (const [key, descriptor] of originals) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); } });
 const tick = () => new Promise((resolve) => setTimeout(resolve, 10));
-async function showWallet() {
-    await act(async () => { root!.render(<ConfigProvider theme={{ token: { motion: false } }}><App><WorkspaceWalletModal open onClose={() => {}} /></App></ConfigProvider>); });
+async function showWallet(creditsEnabled = true, pendingPaymentOrderId?: string) {
+    await act(async () => { root!.render(<QueryClientProvider client={client}><MemoryRouter><ConfigProvider theme={{ token: { motion: false } }}><App><WorkspaceWalletModal open creditsEnabled={creditsEnabled} pendingPaymentOrderId={pendingPaymentOrderId} onClose={() => {}} /></App></ConfigProvider></MemoryRouter></QueryClientProvider>); });
     await act(tick);
 }
 function button(label: string) { return [...document.querySelectorAll("button")].find((item) => item.textContent?.replaceAll(" ", "").includes(label)); }
 
-test("external wallet links to Xiaodong and never fetches internal topup providers", async () => {
+function mixedProducts(): TopupProduct[] {
+    const common = { amountFen: 100, creditsMicrocredits: 0, storageBytes: 1024, storageDurationDays: 30, enabled: true, sortOrder: 0, saleStrategy: "unlimited" as const, canPurchase: true, createdBy: "", updatedBy: "", createdAt: "", updatedAt: "" };
+    return [{ ...common, id: "credits", name: "内部积分套餐", kind: "credits" }, { ...common, id: "storage", name: "存储扩容", kind: "storage" }];
+}
+
+test("external balance failure still permits storage purchases without offering internal credits", async () => {
+    products = mixedProducts(); failWallet = true;
+    await showWallet();
+    expect(document.body.textContent).not.toContain("内部积分套餐");
+    expect(document.body.textContent).toContain("存储扩容");
+    await act(async () => button("立即支付")!.click());
+    await act(tick);
+    const created = calls.find((call) => call.method === "post" && call.url === "/payments/orders");
+    expect(JSON.parse(created!.data).productId).toBe("storage");
+    expect(document.querySelector(".workspace-wallet-payment")?.textContent).not.toContain("内部钱包");
+});
+
+test("storage remains purchasable when credits are disabled", async () => {
+    products = mixedProducts();
+    await showWallet(false);
+    expect(calls.some((call) => call.url === "/wallet")).toBe(false);
+    expect(document.body.textContent).not.toContain("内部积分套餐");
+    expect(document.body.textContent).toContain("购买存储空间");
+    await act(async () => button("立即支付")!.click());
+    await act(tick);
+    expect(calls.some((call) => call.method === "post" && call.url === "/payments/orders")).toBe(true);
+});
+
+test("historic credit orders retain their internal wallet destination notice", async () => {
+    order = { ...order, productKind: "credits", productName: "历史积分套餐", creditsMicrocredits: 1000000 };
+    await showWallet(true, "order");
+    expect(document.querySelector(".workspace-wallet-payment")?.textContent).toContain("此订单仍到账 Canvas 内部钱包");
+});
+
+test("mode switches hide stale internal products even if catalog refresh fails", async () => {
+    products = mixedProducts();
+    currentWallet = { ...external, walletMode: "internal" };
+    useUserStore.getState().setFeatures({ ...defaultFeatureAvailability, walletMode: "internal" });
+    await showWallet();
+    expect(document.body.textContent).toContain("内部积分套餐");
+    failCatalog = true; currentWallet = external;
+    await act(async () => useUserStore.getState().setFeatures({ ...defaultFeatureAvailability, walletMode: "external" }));
+    await act(tick);
+    expect(document.body.textContent).not.toContain("内部积分套餐");
+    expect([...document.querySelectorAll('[role="tab"]')].map((node) => node.textContent)).not.toContain("兑换");
+    expect(document.body.textContent).toContain("存储扩容");
+});
+
+test("external wallet links to Xiaodong while loading storage products", async () => {
     await showWallet();
     expect(document.body.textContent).toContain("125");
     expect(document.querySelector('a[href="https://wallet.example/ai/recharge"]')?.textContent).toContain("前往小洞AI充值");
     expect([...document.querySelectorAll('[role="tab"]')].map((node) => node.textContent)).not.toContain("兑换");
-    expect(calls.some((call) => call.url?.startsWith("/payments/"))).toBe(false);
+    expect(calls.some((call) => call.url === "/payments/products")).toBe(true);
     await act(async () => button("积分消耗历史")!.click());
     expect(document.body.textContent).toContain("模型调用 · 小洞AI");
     expect(document.body.textContent).toContain("仅展示 Canvas");

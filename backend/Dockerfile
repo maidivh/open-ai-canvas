@@ -71,8 +71,9 @@ RUN npm ci --omit=dev --ignore-scripts
 
 FROM node:22.19-alpine
 
+# ffmpeg/ffprobe：短剧抽取剧情段视频最后一帧、时间线合成成片与视频播放转码。
 RUN sed -i 's#https\?://dl-cdn.alpinelinux.org/alpine#https://mirrors.tuna.tsinghua.edu.cn/alpine#g' /etc/apk/repositories \
-    && apk add --no-cache ca-certificates tzdata wget \
+    && apk add --no-cache ca-certificates tzdata wget ffmpeg \
     && addgroup -S app \
     && adduser -S app -G app
 

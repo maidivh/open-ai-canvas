@@ -9,8 +9,10 @@ import { Eye, Plus, RefreshCw, Search, Settings2, XCircle } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { PaginationBar } from "@/pages/admin/components/admin-ui";
+import { paymentOrderGrantLabel } from "@/lib/payment-order-grant";
 import { formatCredits } from "@/constant/credits";
 import { useUserStore } from "@/stores/use-user-store";
+import { formatStorageCapacity, formatStorageDuration } from "@/lib/account-storage-usage";
 import {
     closeAdminPaymentOrder,
     exportAdminPaymentOrders,
@@ -51,8 +53,12 @@ type ProviderFormValues = {
 type ProductFormValues = {
     name: string;
     description?: string;
+    kind: TopupProduct["kind"];
     amountYuan: number;
-    credits: number;
+    credits?: number;
+    storageGB?: number;
+    storageDurationMode?: "permanent" | "days";
+    storageDurationDays?: number;
     enabled: boolean;
     sortOrder: number;
     saleStrategy: TopupProduct["saleStrategy"];
@@ -98,6 +104,8 @@ export default function AdminPaymentsPage() {
     const [productSaving, setProductSaving] = useState(false);
     const [productForm] = Form.useForm<ProductFormValues>();
     const selectedProductStrategy = Form.useWatch("saleStrategy", productForm) || "unlimited";
+    const selectedProductKind = Form.useWatch("kind", productForm) || "credits";
+    const selectedStorageDurationMode = Form.useWatch("storageDurationMode", productForm) || "permanent";
 
     const [orders, setOrders] = useState<AdminPaymentOrder[]>([]);
     const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
@@ -267,8 +275,12 @@ export default function AdminPaymentsPage() {
                 ? {
                       name: product.name,
                       description: product.description,
+                      kind: product.kind || "credits",
                       amountYuan: product.amountFen / 100,
-                      credits: product.creditsMicrocredits / 1_000_000,
+                      credits: product.kind === "storage" ? undefined : product.creditsMicrocredits / 1_000_000,
+                      storageGB: product.kind === "storage" ? product.storageBytes / 1024 ** 3 : undefined,
+                      storageDurationMode: product.storageDurationDays ? "days" : "permanent",
+                      storageDurationDays: product.storageDurationDays || undefined,
                       enabled: product.enabled,
                       sortOrder: product.sortOrder,
                       saleStrategy: product.saleStrategy || "unlimited",
@@ -278,7 +290,7 @@ export default function AdminPaymentsPage() {
                       saleStartAt: product.saleStartAt ? dayjs(product.saleStartAt) : undefined,
                       saleEndAt: product.saleEndAt ? dayjs(product.saleEndAt) : undefined,
                   }
-                : { enabled: true, sortOrder: products.length * 10, amountYuan: 10, credits: 10, saleStrategy: "unlimited" },
+                : { kind: "credits", enabled: true, sortOrder: products.length * 10, amountYuan: 10, credits: 10, storageGB: 10, storageDurationMode: "days", storageDurationDays: 30, saleStrategy: "unlimited" },
         );
         setProductDrawer(product || null);
     };
@@ -286,11 +298,15 @@ export default function AdminPaymentsPage() {
     const saveProduct = async () => {
         if (productDrawer === undefined) return;
         const values = await productForm.validateFields();
+        const storage = values.kind === "storage";
         const input = {
             name: values.name.trim(),
             description: values.description?.trim(),
+            kind: values.kind || "credits",
             amountFen: Math.round(values.amountYuan * 100),
-            creditsMicrocredits: Math.round(values.credits * 1_000_000),
+            creditsMicrocredits: storage ? 0 : Math.round((values.credits || 0) * 1_000_000),
+            storageBytes: storage ? Math.round(values.storageGB || 0) * 1024 ** 3 : 0,
+            storageDurationDays: storage && values.storageDurationMode === "days" ? values.storageDurationDays || 0 : 0,
             enabled: values.enabled,
             sortOrder: values.sortOrder || 0,
             saleStrategy: values.saleStrategy || "unlimited",
@@ -415,7 +431,7 @@ export default function AdminPaymentsPage() {
             width: 180,
             align: "center",
             render: (_, provider) => (
-                <div className="flex flex-col items-center gap-1.5">
+                <div className="flex flex-col items-center gap-2">
                     <AdminStatusBadge label={provider.enabled ? "可用" : "不可用"} tone={provider.enabled ? "success" : "neutral"} />
                     <span className="text-xs text-foreground/45">
                         插件{provider.pluginEnabled ? "已开放" : "已停用"} · 配置{provider.configEnabled ? "已启用" : "已停用"}
@@ -450,7 +466,15 @@ export default function AdminPaymentsPage() {
             ),
         },
         { title: "售价", dataIndex: "amountFen", width: 130, align: "right", render: (value) => <span className="font-medium tabular-nums">¥ {(value / 100).toFixed(2)}</span> },
-        { title: "到账积分", dataIndex: "creditsMicrocredits", width: 150, align: "right", render: (value) => <span className="tabular-nums">{formatCredits(value)}</span> },
+        {
+            title: "权益",
+            key: "grant",
+            width: 180,
+            align: "right",
+            render: (_, product) => (
+                <span className="tabular-nums">{product.kind === "storage" ? `+${formatStorageCapacity(product.storageBytes)} · ${formatStorageDuration(product.storageDurationDays)}` : `${formatCredits(product.creditsMicrocredits)} 积分`}</span>
+            ),
+        },
         { title: "排序", dataIndex: "sortOrder", width: 90, align: "center" },
         {
             title: "上架策略",
@@ -552,14 +576,14 @@ export default function AdminPaymentsPage() {
             ),
         },
         {
-            title: "金额 / 积分",
+            title: "金额 / 权益",
             key: "amount",
-            width: 130,
+            width: 170,
             align: "right",
             render: (_, order) => (
                 <div>
                     <div className="font-medium tabular-nums">¥ {(order.amountFen / 100).toFixed(2)}</div>
-                    <div className="text-xs text-foreground/45">{formatCredits(order.creditsMicrocredits)} 积分</div>
+                    <div className="text-xs text-foreground/45">{paymentOrderGrantLabel(order)}</div>
                 </div>
             ),
         },
@@ -647,7 +671,7 @@ export default function AdminPaymentsPage() {
             }
             scroll
         >
-            {external ? <Callout className="my-4" tone="info" title="当前使用小洞AI充值">这里保留 Canvas 内部支付配置与历史订单。旧订单支付完成后仍到账内部钱包，切回内部模式后可使用。</Callout> : null}
+            {external ? <Callout className="my-4" tone="info" title="当前积分使用小洞AI充值">存储空间套餐仍在本站购买并生效。旧积分订单支付完成后仍到账 Canvas 内部钱包，切回内部模式后可使用。</Callout> : null}
             <Callout className="my-4" tone="info" title="平台不提供支付退款">
                 管理端仅提供查单、关单和对账。关单前始终先向渠道查单；对账发现已支付未入账订单时会幂等补发积分。
             </Callout>
@@ -874,7 +898,7 @@ export default function AdminPaymentsPage() {
                             },
                             { key: "product", label: "商品", children: selectedOrder.productName },
                             { key: "channel", label: "支付渠道", children: providerNames[selectedOrder.providerId] || selectedOrder.providerId },
-                            { key: "amount", label: "金额 / 积分", children: `¥ ${(selectedOrder.amountFen / 100).toFixed(2)} / ${formatCredits(selectedOrder.creditsMicrocredits)} 积分` },
+                            { key: "amount", label: "金额 / 权益", children: `¥ ${(selectedOrder.amountFen / 100).toFixed(2)} / ${paymentOrderGrantLabel(selectedOrder)}` },
                             { key: "status", label: "状态", children: paymentOrderStatus[selectedOrder.status]?.label || selectedOrder.status },
                             ...(
                                 [
@@ -939,7 +963,7 @@ export default function AdminPaymentsPage() {
             </Drawer>
 
             <Drawer
-                title={productDrawer ? "编辑充值商品" : "新增充值商品"}
+                title={productDrawer ? "编辑商品" : "新增商品"}
                 width={520}
                 open={productDrawer !== undefined}
                 destroyOnHidden
@@ -952,32 +976,64 @@ export default function AdminPaymentsPage() {
             >
                 <Form form={productForm} layout="vertical" requiredMark="optional">
                     <Form.Item name="name" label="商品名称" rules={[{ required: true, max: 120 }]}>
-                        <Input placeholder="例如：100 积分" />
+                        <Input placeholder="例如：100 积分 / 50 GB 年包" />
                     </Form.Item>
                     <Form.Item name="description" label="商品说明" rules={[{ max: 500 }]}>
                         <Input.TextArea rows={3} />
+                    </Form.Item>
+                    <Form.Item name="kind" label="商品类型" rules={[{ required: true }]} extra={productDrawer ? "类型创建后不能修改；如需改类型请新建商品。" : "存储空间商品在关闭积分功能后仍可购买。"}>
+                        <Select
+                            disabled={Boolean(productDrawer)}
+                            options={[
+                                { value: "credits", label: "积分充值" },
+                                { value: "storage", label: "存储空间扩容" },
+                            ]}
+                        />
                     </Form.Item>
                     <div className="grid grid-cols-2 gap-3">
                         <Form.Item name="amountYuan" label="售价（元）" rules={[{ required: true }, { type: "number", min: 0.01, max: 1_000_000 }]}>
                             <InputNumber min={0.01} max={1_000_000} precision={2} className="w-full" />
                         </Form.Item>
-                        <Form.Item
-                            name="credits"
-                            label="到账积分"
-                            rules={[
-                                { required: true },
-                                {
-                                    validator: (_, value) => {
-                                        const credits = Number(value);
-                                        const microcredits = Math.round(credits * 1_000_000);
-                                        return Number.isFinite(credits) && credits > 0 && credits <= 1_000_000_000 && Number.isSafeInteger(microcredits) ? Promise.resolve() : Promise.reject(new Error("请输入 0.000001 至 10 亿之间且可安全处理的积分"));
+                        {selectedProductKind === "storage" ? (
+                            <Form.Item name="storageGB" label="扩容容量（GB）" rules={[{ required: true }, { type: "integer", min: 1, max: 100_000, message: "请输入 1-100000 的整数 GB" }]}>
+                                <InputNumber min={1} max={100_000} precision={0} className="w-full" />
+                            </Form.Item>
+                        ) : (
+                            <Form.Item
+                                name="credits"
+                                label="到账积分"
+                                rules={[
+                                    { required: true },
+                                    {
+                                        validator: (_, value) => {
+                                            const credits = Number(value);
+                                            const microcredits = Math.round(credits * 1_000_000);
+                                            return Number.isFinite(credits) && credits > 0 && credits <= 1_000_000_000 && Number.isSafeInteger(microcredits) ? Promise.resolve() : Promise.reject(new Error("请输入 0.000001 至 10 亿之间且可安全处理的积分"));
+                                        },
                                     },
-                                },
-                            ]}
-                        >
-                            <InputNumber min={0.000001} max={1_000_000_000} precision={6} className="w-full" />
-                        </Form.Item>
+                                ]}
+                            >
+                                <InputNumber min={0.000001} max={1_000_000_000} precision={6} className="w-full" />
+                            </Form.Item>
+                        )}
                     </div>
+                    {selectedProductKind === "storage" ? (
+                        <div className="grid grid-cols-2 gap-3">
+                            <Form.Item name="storageDurationMode" label="有效期" rules={[{ required: true }]}>
+                                <Select
+                                    options={[
+                                        { value: "days", label: "按天数" },
+                                        { value: "permanent", label: "永久有效" },
+                                    ]}
+                                />
+                            </Form.Item>
+                            {selectedStorageDurationMode === "days" ? (
+                                <Form.Item name="storageDurationDays" label="有效天数" extra="从支付确认时起算，常用 30 / 90 / 365 天。" rules={[{ required: true }, { type: "integer", min: 1, max: 3650, message: "请输入 1-3650 天" }]}>
+                                    <InputNumber min={1} max={3650} precision={0} className="w-full" />
+                                </Form.Item>
+                            ) : null}
+                        </div>
+                    ) : null}
                     <Form.Item name="saleStrategy" label="上架策略" rules={[{ required: true }]}>
                         <Select
                             options={[

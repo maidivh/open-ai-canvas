@@ -97,7 +97,7 @@ afterAll(() => {
     }
 });
 async function show(copies = 1, showWallet = false) {
-    await act(async () => root.render(<QueryClientProvider client={client}>{Array.from({ length: copies }, (_, i) => <Reader key={i} />)}<ModelPicker config={config} value={config.model} capability="image" onChange={() => {}} />{showWallet ? <ConfigProvider theme={{ token: { motion: false } }}><App><WorkspaceWalletModal open onClose={() => {}} /></App></ConfigProvider> : null}</QueryClientProvider>));
+    await act(async () => root.render(<QueryClientProvider client={client}><MemoryRouter>{Array.from({ length: copies }, (_, i) => <Reader key={i} />)}<ModelPicker config={config} value={config.model} capability="image" onChange={() => {}} />{showWallet ? <ConfigProvider theme={{ token: { motion: false } }}><App><WorkspaceWalletModal open onClose={() => {}} /></App></ConfigProvider> : null}</MemoryRouter></QueryClientProvider>));
     await act(tick);
 }
 async function event(name: "wallet:updated" | "focus" | "visibilitychange") {
