@@ -62,6 +62,10 @@ export default function UsersPanel({ onUserChanged }: { onUserChanged?: (user: L
     }, [visibleColumns]);
 
     useEffect(() => {
+        if (externalWallet) setAdjustingUser(null);
+    }, [externalWallet]);
+
+    useEffect(() => {
         void listAdminUserGroups()
             .then((result) => setGroups(result.groups))
             .catch((error) => message.error(error instanceof Error ? error.message : "读取用户分组失败"));
@@ -165,6 +169,7 @@ export default function UsersPanel({ onUserChanged }: { onUserChanged?: (user: L
 
     return (
         <>
+            {externalWallet ? <p className="text-sm text-muted-foreground" role="status">当前使用外部钱包，请在小洞 AI 管理积分；列表中的内部积分仅作历史保留。</p> : null}
             <AdminDataTable
                 toolbar={
                     <>
@@ -265,7 +270,7 @@ export default function UsersPanel({ onUserChanged }: { onUserChanged?: (user: L
             <AdminUserDetailDrawer userId={detailUserId} previousUserId={previousUserId} nextUserId={nextUserId} onNavigate={setDetailUserId} onClose={() => setDetailUserId(null)} />
             <AdminUserCreateModal open={createUserOpen} groups={groups} onClose={() => setCreateUserOpen(false)} onCreated={addUser} />
             <AdminUserEditModal user={editingUser} actorId={actor?.id} groups={groups} onClose={() => setEditingUser(null)} onSaved={replaceUser} />
-            <UserCreditAdjustModal user={adjustingUser} onClose={() => setAdjustingUser(null)} onAdjusted={(patch) => setUsers((items) => items.map((item) => (item.id === patch.id ? { ...item, ...patch } : item)))} />
+            {!externalWallet ? <UserCreditAdjustModal user={adjustingUser} onClose={() => setAdjustingUser(null)} onAdjusted={(patch) => setUsers((items) => items.map((item) => (item.id === patch.id ? { ...item, ...patch } : item)))} /> : null}
         </>
     );
 }

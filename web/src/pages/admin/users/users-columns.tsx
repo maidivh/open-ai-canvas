@@ -163,7 +163,7 @@ export function createUserColumns({
                     visibleActionCount={3}
                     actions={[
                         { key: "edit", label: "编辑", icon: <Pencil className="size-3.5" />, onClick: () => onEdit(user) },
-                        { key: "credits", label: "调积分", icon: <Coins className="size-3.5" />, onClick: () => onAdjustCredits(user) },
+                        ...(!externalWallet ? [{ key: "credits", label: "调积分", icon: <Coins className="size-3.5" />, onClick: () => onAdjustCredits(user) }] : []),
                         {
                             key: "toggle-status",
                             label: user.status === "active" ? "停用" : "启用",
