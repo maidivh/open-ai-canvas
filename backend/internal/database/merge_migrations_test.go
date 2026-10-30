@@ -17,13 +17,18 @@ func TestMergedSchemaPreservesPublishedHistories(t *testing.T) {
 		walletAt61 bool
 		want61     string
 		want73     string
+		want78     string
 	}{
-		{"fresh", 0, false, false, "drama_production", "shared_wallet_billing"},
-		{"main72", 72, false, false, "drama_production", "shared_wallet_billing"},
-		{"main60", 60, false, false, "drama_production", "shared_wallet_billing"},
-		{"branch61_memory58", 61, false, true, "shared_wallet_billing", "drama_production"},
-		{"branch61_wallet58", 61, true, false, "agent_memory_proposals", "drama_production"},
-		{"legacy_wallet58", 58, true, false, "agent_memory_proposals", "drama_production"},
+		{"fresh", 0, false, false, "drama_production", "drama_episode_source_format", "shared_wallet_billing"},
+		{"main72", 72, false, false, "drama_production", "drama_episode_source_format", "shared_wallet_billing"},
+		{"main60", 60, false, false, "drama_production", "drama_episode_source_format", "shared_wallet_billing"},
+		{"main77", 77, false, false, "drama_production", "drama_episode_source_format", "shared_wallet_billing"},
+		{"branch73_wallet73", 73, false, false, "drama_production", "shared_wallet_billing", "drama_episode_source_format"},
+		{"branch73_memory58", 73, false, true, "shared_wallet_billing", "drama_production", "drama_episode_source_format"},
+		{"branch73_wallet58", 73, true, false, "agent_memory_proposals", "drama_production", "drama_episode_source_format"},
+		{"branch61_memory58", 61, false, true, "shared_wallet_billing", "drama_production", "drama_episode_source_format"},
+		{"branch61_wallet58", 61, true, false, "agent_memory_proposals", "drama_production", "drama_episode_source_format"},
+		{"legacy_wallet58", 58, true, false, "agent_memory_proposals", "drama_production", "drama_episode_source_format"},
 	} {
 		t.Run(history.name, func(t *testing.T) {
 			db, err := Open(Config{Driver: "sqlite", DSN: filepath.Join(t.TempDir(), "merge.db")})
@@ -44,12 +49,18 @@ func TestMergedSchemaPreservesPublishedHistories(t *testing.T) {
 				if err := db.Where("version > ?", history.version).Delete(&schemaMigration{}).Error; err != nil {
 					t.Fatal(err)
 				}
-				for _, version := range []int64{58, 61} {
+				for _, version := range []int64{58, 61, 73} {
 					var name, checksum string
 					if (version == 58 && history.walletAt58) || (version == 61 && history.walletAt61) {
 						name, checksum = "shared_wallet_billing", "sha256:shared-wallet-billing-v58-20261019"
 					} else if version == 61 && history.walletAt58 {
 						name, checksum = "agent_memory_proposals", "sha256:agent-memory-proposals-v58"
+					} else if version == 73 && history.want73 != "drama_episode_source_format" {
+						for _, item := range schemaMigrations {
+							if item.name == history.want73 {
+								name, checksum = item.name, item.checksum
+							}
+						}
 					}
 					if name != "" && version <= history.version {
 						if err := db.Model(&schemaMigration{}).Where("version = ?", version).Updates(map[string]any{
@@ -69,7 +80,7 @@ func TestMergedSchemaPreservesPublishedHistories(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				if !history.walletAt58 && !history.walletAt61 {
+				if !history.walletAt58 && !history.walletAt61 && history.want73 != "shared_wallet_billing" {
 					absent = append(absent, &model.WalletOperation{})
 					if err := db.Migrator().DropColumn(&model.BillingOrder{}, "WalletMode"); err != nil {
 						t.Fatal(err)
@@ -80,7 +91,22 @@ func TestMergedSchemaPreservesPublishedHistories(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				if err := db.Omit("WalletMode").Create(&model.BillingOrder{ID: "existing-order", AmountMicrocredits: 12345}).Error; err != nil {
+				if history.version >= 72 && history.want78 == "drama_episode_source_format" {
+					if err := db.Migrator().DropColumn(&model.DramaEpisode{}, "SourceFormat"); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if history.version < 75 {
+					for _, table := range []any{&model.UserGroup{}, &model.UserGroupChannel{}} {
+						if err := db.Migrator().DropTable(table); err != nil {
+							t.Fatal(err)
+						}
+					}
+					if err := db.Migrator().DropColumn(&model.BillingOrder{}, "UserGroup"); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := db.Omit("WalletMode", "UserGroup").Create(&model.BillingOrder{ID: "existing-order", AmountMicrocredits: 12345}).Error; err != nil {
 					t.Fatal(err)
 				}
 				if err := db.Create(&model.AgentLesson{ID: "existing-lesson", Lesson: "keep this memory"}).Error; err != nil {
@@ -122,7 +148,7 @@ func TestMergedSchemaPreservesPublishedHistories(t *testing.T) {
 					t.Fatalf("existing migration changed: before=%+v after=%+v", old, current)
 				}
 			}
-			for version, want := range map[int64]string{61: history.want61, 73: history.want73} {
+			for version, want := range map[int64]string{61: history.want61, 73: history.want73, 78: history.want78} {
 				var record schemaMigration
 				if err := db.First(&record, "version = ?", version).Error; err != nil {
 					t.Fatal(err)
@@ -138,6 +164,9 @@ func TestMergedSchemaPreservesPublishedHistories(t *testing.T) {
 			}
 			if !db.Migrator().HasColumn(&model.BillingOrder{}, "WalletMode") || !db.Migrator().HasColumn(&model.AgentMemorySetting{}, "CompactProposalID") {
 				t.Fatal("merged fields missing")
+			}
+			if !db.Migrator().HasColumn(&model.DramaEpisode{}, "SourceFormat") || !db.Migrator().HasColumn(&model.BillingOrder{}, "UserGroup") || !db.Migrator().HasColumn(&model.AgentMemoryDocument{}, "NextEntrySeq") || !db.Migrator().HasTable(&model.UserGroupChannel{}) {
+				t.Fatal("upstream schema additions missing")
 			}
 			if history.version > 0 {
 				var order model.BillingOrder
@@ -155,7 +184,7 @@ func TestMergedSchemaPreservesPublishedHistories(t *testing.T) {
 					}
 				}
 			}
-			for _, version := range []int64{58, 61, 73} {
+			for _, version := range []int64{58, 61, 73, 78} {
 				for _, field := range []string{"checksum", "name"} {
 					var original schemaMigration
 					if err := db.First(&original, "version = ?", version).Error; err != nil {

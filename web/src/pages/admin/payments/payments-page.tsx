@@ -1,6 +1,6 @@
 import { PaymentBrandIcon } from "@/components/payment-brand-icons";
 import { Callout } from "@/pages/admin/ui/controls";
-import { App, Button, DatePicker, Descriptions, Drawer, Form, Input, InputNumber, Tabs, Typography } from "antd";
+import { App, Button, DatePicker, Descriptions, Form, Input, InputNumber, Tabs, Typography } from "antd";
 import { AdminDrawer } from "@/pages/admin/ui/overlays";
 import { Switch } from "@/pages/admin/ui/controls";
 import type { ColumnsType } from "antd/es/table";
@@ -19,6 +19,10 @@ import {
     exportAdminPaymentReconciliations,
     exportAdminPaymentReconciliationItems,
     createAdminTopupProduct,
+    formatPaymentAmount,
+    getAdminPaymentSettings,
+    updateAdminPaymentSettings,
+    type PaymentCurrency,
     listAdminPaymentOrders,
     listAdminPaymentProviders,
     listAdminPaymentReconciliationItems,
@@ -54,6 +58,8 @@ type ProductFormValues = {
     name: string;
     description?: string;
     kind: TopupProduct["kind"];
+    currency: PaymentCurrency;
+    /** 售价主单位（元 / 美元），提交时换算为最小单位。 */
     amountYuan: number;
     credits?: number;
     storageGB?: number;
@@ -95,6 +101,8 @@ export default function AdminPaymentsPage() {
     const [providers, setProviders] = useState<AdminPaymentProvider[]>([]);
     const [products, setProducts] = useState<TopupProduct[]>([]);
     const [loading, setLoading] = useState(true);
+    const [defaultCurrency, setDefaultCurrency] = useState<PaymentCurrency>("CNY");
+    const [currencySaving, setCurrencySaving] = useState(false);
 
     const [providerDrawer, setProviderDrawer] = useState<AdminPaymentProvider>();
     const [providerSaving, setProviderSaving] = useState(false);
@@ -106,6 +114,7 @@ export default function AdminPaymentsPage() {
     const selectedProductStrategy = Form.useWatch("saleStrategy", productForm) || "unlimited";
     const selectedProductKind = Form.useWatch("kind", productForm) || "credits";
     const selectedStorageDurationMode = Form.useWatch("storageDurationMode", productForm) || "permanent";
+    const selectedProductCurrency: PaymentCurrency = Form.useWatch("currency", productForm) || defaultCurrency;
 
     const [orders, setOrders] = useState<AdminPaymentOrder[]>([]);
     const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
@@ -168,9 +177,10 @@ export default function AdminPaymentsPage() {
     const loadBase = async () => {
         setLoading(true);
         try {
-            const [providerResult, productResult] = await Promise.all([listAdminPaymentProviders(), listAdminTopupProducts()]);
+            const [providerResult, productResult, settingsResult] = await Promise.all([listAdminPaymentProviders(), listAdminTopupProducts(), getAdminPaymentSettings()]);
             setProviders(providerResult.providers);
             setProducts(productResult.products);
+            setDefaultCurrency(settingsResult.settings.defaultCurrency);
             setBillProviderId((current) => current || providerResult.providers.find((item) => item.configured)?.id || providerResult.providers[0]?.id || "");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "读取支付配置失败");
@@ -276,6 +286,7 @@ export default function AdminPaymentsPage() {
                       name: product.name,
                       description: product.description,
                       kind: product.kind || "credits",
+                      currency: product.currency || "CNY",
                       amountYuan: product.amountFen / 100,
                       credits: product.kind === "storage" ? undefined : product.creditsMicrocredits / 1_000_000,
                       storageGB: product.kind === "storage" ? product.storageBytes / 1024 ** 3 : undefined,
@@ -290,7 +301,7 @@ export default function AdminPaymentsPage() {
                       saleStartAt: product.saleStartAt ? dayjs(product.saleStartAt) : undefined,
                       saleEndAt: product.saleEndAt ? dayjs(product.saleEndAt) : undefined,
                   }
-                : { kind: "credits", enabled: true, sortOrder: products.length * 10, amountYuan: 10, credits: 10, storageGB: 10, storageDurationMode: "days", storageDurationDays: 30, saleStrategy: "unlimited" },
+                : { kind: "credits", currency: defaultCurrency, enabled: true, sortOrder: products.length * 10, amountYuan: 10, credits: 10, storageGB: 10, storageDurationMode: "days", storageDurationDays: 30, saleStrategy: "unlimited" },
         );
         setProductDrawer(product || null);
     };
@@ -304,6 +315,7 @@ export default function AdminPaymentsPage() {
             description: values.description?.trim(),
             kind: values.kind || "credits",
             amountFen: Math.round(values.amountYuan * 100),
+            currency: values.currency || defaultCurrency,
             creditsMicrocredits: storage ? 0 : Math.round((values.credits || 0) * 1_000_000),
             storageBytes: storage ? Math.round(values.storageGB || 0) * 1024 ** 3 : 0,
             storageDurationDays: storage && values.storageDurationMode === "days" ? values.storageDurationDays || 0 : 0,
@@ -327,6 +339,22 @@ export default function AdminPaymentsPage() {
             message.error(error instanceof Error ? error.message : "保存充值商品失败");
         } finally {
             setProductSaving(false);
+        }
+    };
+
+    const saveDefaultCurrency = async (currency: PaymentCurrency) => {
+        const previous = defaultCurrency;
+        setDefaultCurrency(currency);
+        setCurrencySaving(true);
+        try {
+            const result = await updateAdminPaymentSettings({ defaultCurrency: currency });
+            setDefaultCurrency(result.settings.defaultCurrency);
+            message.success(`默认充值货币已切换为 ${result.settings.defaultCurrency}`);
+        } catch (error) {
+            setDefaultCurrency(previous);
+            message.error(error instanceof Error ? error.message : "保存默认充值货币失败");
+        } finally {
+            setCurrencySaving(false);
         }
     };
 
@@ -465,7 +493,7 @@ export default function AdminPaymentsPage() {
                 </div>
             ),
         },
-        { title: "售价", dataIndex: "amountFen", width: 130, align: "right", render: (value) => <span className="font-medium tabular-nums">¥ {(value / 100).toFixed(2)}</span> },
+        { title: "售价", dataIndex: "amountFen", width: 130, align: "right", render: (value, product) => <span className="font-medium tabular-nums">{formatPaymentAmount(value, product.currency)}</span> },
         {
             title: "权益",
             key: "grant",
@@ -582,7 +610,7 @@ export default function AdminPaymentsPage() {
             align: "right",
             render: (_, order) => (
                 <div>
-                    <div className="font-medium tabular-nums">¥ {(order.amountFen / 100).toFixed(2)}</div>
+                    <div className="font-medium tabular-nums">{formatPaymentAmount(order.amountFen, order.currency)}</div>
                     <div className="text-xs text-foreground/45">{paymentOrderGrantLabel(order)}</div>
                 </div>
             ),
@@ -592,23 +620,18 @@ export default function AdminPaymentsPage() {
         {
             title: "操作",
             key: "actions",
-            width: 150,
+            width: 220,
             fixed: "right",
             align: "center",
+            // 只显示当前状态下能执行的操作：已到账或已关闭的订单只剩“详情”，不再出现一排禁用按钮或“更多”。
             render: (_, order) => (
                 <AdminRowActions
                     primary={{ label: "详情", icon: <Eye className="size-3.5" />, onClick: () => setSelectedOrder(order) }}
-                    visibleActionCount={0}
                     actions={[
-                        { key: "sync", label: "同步支付状态", icon: <RefreshCw className="size-3.5" />, disabled: Boolean(orderActionId) || ["credited", "closed"].includes(order.status), onClick: () => queryOrder(order) },
-                        {
-                            key: "close",
-                            label: "关闭订单",
-                            icon: <XCircle className="size-3.5" />,
-                            danger: true,
-                            disabled: Boolean(orderActionId) || !["created", "pending", "create_failed", "closing"].includes(order.status),
-                            onClick: () => closeOrder(order),
-                        },
+                        ...(!["credited", "closed"].includes(order.status) ? [{ key: "sync", label: "同步状态", icon: <RefreshCw className="size-3.5" />, disabled: Boolean(orderActionId), onClick: () => queryOrder(order) }] : []),
+                        ...(["created", "pending", "create_failed", "closing"].includes(order.status)
+                            ? [{ key: "close", label: "关闭", icon: <XCircle className="size-3.5" />, danger: true, disabled: Boolean(orderActionId), onClick: () => closeOrder(order) }]
+                            : []),
                     ]}
                 />
             ),
@@ -689,7 +712,22 @@ export default function AdminPaymentsPage() {
                         label: "充值商品",
                         children: (
                             <AdminDataTable
-                                toolbar={<span />}
+                                toolbar={
+                                    <label className="flex items-center gap-2 text-sm" title="新建商品默认使用该货币，用户充值面板优先展示该货币的商品；已有商品价格不会被改写。">
+                                        <span className="text-foreground/65">默认充值货币</span>
+                                        <Select
+                                            className="w-36"
+                                            aria-label="默认充值货币"
+                                            value={defaultCurrency}
+                                            disabled={currencySaving}
+                                            options={[
+                                                { value: "CNY", label: "CNY 人民币" },
+                                                { value: "USD", label: "USD 美元" },
+                                            ]}
+                                            onChange={(value) => void saveDefaultCurrency(value as PaymentCurrency)}
+                                        />
+                                    </label>
+                                }
                                 trailing={
                                     <Button type="primary" className="admin-toolbar-primary-action" icon={<Plus className="size-4" />} onClick={() => openProduct()}>
                                         新增商品
@@ -898,7 +936,7 @@ export default function AdminPaymentsPage() {
                             },
                             { key: "product", label: "商品", children: selectedOrder.productName },
                             { key: "channel", label: "支付渠道", children: providerNames[selectedOrder.providerId] || selectedOrder.providerId },
-                            { key: "amount", label: "金额 / 权益", children: `¥ ${(selectedOrder.amountFen / 100).toFixed(2)} / ${paymentOrderGrantLabel(selectedOrder)}` },
+                            { key: "amount", label: "金额 / 权益", children: `${formatPaymentAmount(selectedOrder.amountFen, selectedOrder.currency)} / ${paymentOrderGrantLabel(selectedOrder)}` },
                             { key: "status", label: "状态", children: paymentOrderStatus[selectedOrder.status]?.label || selectedOrder.status },
                             ...(
                                 [
@@ -915,7 +953,7 @@ export default function AdminPaymentsPage() {
             </AdminDrawer>
             <AdminUserDetailDrawer userId={selectedUserId} onClose={() => setSelectedUserId(null)} />
 
-            <Drawer
+            <AdminDrawer
                 title={providerDrawer ? `配置 ${providerDrawer.name}` : "配置支付渠道"}
                 width={620}
                 open={Boolean(providerDrawer)}
@@ -960,9 +998,9 @@ export default function AdminPaymentsPage() {
                         })}
                     </Form>
                 ) : null}
-            </Drawer>
+            </AdminDrawer>
 
-            <Drawer
+            <AdminDrawer
                 title={productDrawer ? "编辑商品" : "新增商品"}
                 width={520}
                 open={productDrawer !== undefined}
@@ -990,8 +1028,16 @@ export default function AdminPaymentsPage() {
                             ]}
                         />
                     </Form.Item>
+                    <Form.Item name="currency" label="售价货币" rules={[{ required: true }]} extra="支付渠道需支持所选货币；国内支付渠道通常只接受人民币。">
+                        <Select
+                            options={[
+                                { value: "CNY", label: "CNY 人民币" },
+                                { value: "USD", label: "USD 美元" },
+                            ]}
+                        />
+                    </Form.Item>
                     <div className="grid grid-cols-2 gap-3">
-                        <Form.Item name="amountYuan" label="售价（元）" rules={[{ required: true }, { type: "number", min: 0.01, max: 1_000_000 }]}>
+                        <Form.Item name="amountYuan" label={selectedProductCurrency === "USD" ? "售价（美元）" : "售价（元）"} rules={[{ required: true }, { type: "number", min: 0.01, max: 1_000_000 }]}>
                             <InputNumber min={0.01} max={1_000_000} precision={2} className="w-full" />
                         </Form.Item>
                         {selectedProductKind === "storage" ? (
@@ -1076,9 +1122,9 @@ export default function AdminPaymentsPage() {
                         <Switch />
                     </Form.Item>
                 </Form>
-            </Drawer>
+            </AdminDrawer>
 
-            <Drawer
+            <AdminDrawer
                 title={detailRun ? `${providerNames[detailRun.providerId] || detailRun.providerId} · ${detailRun.billDate} 对账明细` : "对账明细"}
                 width="min(1080px, 94vw)"
                 open={Boolean(detailRun)}
@@ -1127,7 +1173,7 @@ export default function AdminPaymentsPage() {
                     empty={<AdminTableEmpty title={detailRun?.status === "failed" ? "本次对账未生成明细" : "账单没有交易记录"} />}
                     footer={<PaginationBar alwaysShow current={detailPage} pageSize={detailPageSize} total={detailTotal} onChange={(page, size) => detailRun && void openRunDetails(detailRun, size !== detailPageSize ? 1 : page, size, detailResult)} />}
                 />
-            </Drawer>
+            </AdminDrawer>
         </AdminPageFrame>
     );
 }

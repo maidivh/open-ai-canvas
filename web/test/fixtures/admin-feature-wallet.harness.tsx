@@ -10,6 +10,7 @@ for (const [key, value] of Object.entries({ window: dom, document: dom.document,
 const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { App, ConfigProvider } = await import("antd");
+const { MemoryRouter } = await import("react-router");
 const { default: FeatureAvailabilityPanel } = await import("../../src/pages/admin/components/feature-availability-panel");
 const { WelcomeSetting } = await import("../../src/pages/admin/settings/components/welcome-setting");
 const { useUserStore, defaultFeatureAvailability } = await import("../../src/stores/use-user-store");
@@ -49,7 +50,7 @@ afterEach(async () => { await act(async () => root.unmount()); host.remove(); })
 afterAll(() => { apiClient.defaults.adapter = originalAdapter; dom.happyDOM.abort(); for (const [key, descriptor] of originals) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); } });
 const tick = () => new Promise((resolve) => setTimeout(resolve, 10));
 async function render(welcome = false) {
-    await act(async () => { root.render(<ConfigProvider theme={{ token: { motion: false } }}><App>{welcome ? <WelcomeSetting /> : <FeatureAvailabilityPanel />}</App></ConfigProvider>); });
+    await act(async () => { root.render(<MemoryRouter><ConfigProvider theme={{ token: { motion: false } }}><App>{welcome ? <WelcomeSetting /> : <FeatureAvailabilityPanel />}</App></ConfigProvider></MemoryRouter>); });
     await act(tick);
 }
 function toggle(label: string) {

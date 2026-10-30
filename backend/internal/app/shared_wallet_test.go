@@ -135,7 +135,7 @@ func newSharedWalletTest(t *testing.T) (*Service, *gorm.DB, *walletTestServer, *
 	sqlDB, _ := db.DB()
 	sqlDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { sqlDB.Close() })
-	if err = db.AutoMigrate(&model.SystemSetting{}, &model.CreditAccount{}, &model.CreditLedgerEntry{}, &model.BillingOrder{}, &model.WalletOperation{}, &model.UserIdentity{}, &model.User{}, &model.AdminAuditEvent{}, &model.PaymentOrder{}, &model.Task{}, &model.ApiCallLog{}); err != nil {
+	if err = db.AutoMigrate(&model.SystemSetting{}, &model.CreditAccount{}, &model.CreditLedgerEntry{}, &model.BillingOrder{}, &model.WalletOperation{}, &model.UserIdentity{}, &model.User{}, &model.UserGroup{}, &model.UserGroupChannel{}, &model.AdminAuditEvent{}, &model.PaymentOrder{}, &model.Task{}, &model.ApiCallLog{}); err != nil {
 		t.Fatal(err)
 	}
 	svc := &Service{repo: repository.New(db), dataDir: t.TempDir()}
@@ -752,7 +752,7 @@ func TestSharedWalletExternalQuoteRoundsBeforeApproval(t *testing.T) {
 		t.Fatal(err)
 	}
 	intent := ModelRequestIntent{Capability: "video", Options: map[string]any{"duration": 5, "resolution": "720p", "aspectRatio": "16:9"}}
-	quote, err := s.QuoteChannelModel(ChannelModelQuoteRequest{ChannelID: channel.ID, ModelKey: channelModel.ModelKey, Intent: intent})
+	quote, err := s.QuoteChannelModel("quote-user", ChannelModelQuoteRequest{ChannelID: channel.ID, ModelKey: channelModel.ModelKey, Intent: intent})
 	if err != nil {
 		t.Fatal(err)
 	}

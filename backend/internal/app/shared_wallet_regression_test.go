@@ -89,12 +89,57 @@ func TestSharedWalletLogicalQuoteUsesOneWalletSnapshot(t *testing.T) {
 	_, task := newWalletQuoteRegressionModels(t, s, db, "logical-unified")
 	cfg := setWalletRegressionMode(t, s, "external")
 	switched := switchWalletAfterSnapshotRead(t, s, db, cfg, "internal")
-	quote, err := s.QuoteLogicalModel(task.LogicalModelID, ModelRequestIntent{Capability: "text"})
+	quote, err := s.QuoteLogicalModel("member", task.LogicalModelID, ModelRequestIntent{Capability: "text"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !*switched || quote.AmountMicrocredits != 2_000_000 || quote.Quantity != 128200 {
 		t.Fatalf("logical quote mixed wallet snapshots: switched=%v quote=%+v", *switched, quote)
+	}
+}
+
+func TestSharedWalletMergedGroupPricingKeepsAuthorization(t *testing.T) {
+	for _, entry := range []string{"price-tier", "logical-unified"} {
+		t.Run(entry, func(t *testing.T) {
+			s, db, _, _ := newSharedWalletTest(t)
+			item, task := newWalletQuoteRegressionModels(t, s, db, entry)
+			group := model.UserGroup{ID: "merge-group", Code: "merge-group", Name: "Merge group", RatioBasisPoints: 5_000, PointsPerUSD: 7 * CreditScale, AllChannels: true}
+			if err := db.Create(&group).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Model(&model.User{}).Where("id = ?", "member").Update("user_group", group.Code).Error; err != nil {
+				t.Fatal(err)
+			}
+			input := map[string]any{"mode": "text", "prompt": "hi", "textOptions": map[string]any{"maxOutputTokens": 200}, "config": map[string]any{}}
+			var order *model.BillingOrder
+			var err error
+			wantAmount := int64(CreditScale)
+			if entry == "price-tier" {
+				if err := db.Model(&item).Update("price_currency", model.PriceCurrencyUSD).Error; err != nil {
+					t.Fatal(err)
+				}
+				wantAmount = 5 * CreditScale
+				order, err = s.newBillingOrderWithPriceTier("member", "", "merged-group", item.ChannelID, item.ModelKey, "text", "test", 1, estimateTaskTokens(input), "race-tier")
+			} else {
+				order, err = s.newLogicalModelBillingOrder("member", task, input)
+				quote, quoteErr := s.QuoteLogicalModel("member", task.LogicalModelID, ModelRequestIntent{Capability: "text"})
+				if quoteErr != nil || quote.AmountMicrocredits != wantAmount {
+					t.Fatalf("grouped logical quote = %+v, %v", quote, quoteErr)
+				}
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if order.UserGroup != group.Code || order.MultiplierBasisPoints != 5_000 || order.AmountMicrocredits != wantAmount || order.ReservedAmountMicrocredits != wantAmount {
+				t.Fatalf("group price lost during wallet rounding: %+v", order)
+			}
+			if order.WalletMode != "external" || order.WalletVersion != 1 || order.WalletOutputTokenLimit != 200 || order.Quantity != 128200 || !order.ChargeLimitSet || order.ChargeLimitMicrocredits != wantAmount {
+				t.Fatalf("wallet authorization lost during group pricing: %+v", order)
+			}
+			if entry == "price-tier" && (order.PriceCurrency != model.PriceCurrencyUSD || order.CurrencyRateMicrocredits != 7*CreditScale || order.OutputTokenPriceMicrocredits != 70_000_000) {
+				t.Fatalf("currency snapshot lost: %+v", order)
+			}
+		})
 	}
 }
 

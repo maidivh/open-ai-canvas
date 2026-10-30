@@ -1,6 +1,7 @@
 import { create } from "zustand";
 
 import { DEFAULT_DRAWING_ENGINE, type CanvasDrawingEngineSetting } from "@/lib/canvas/canvas-drawing-engine";
+import type { PublicUserGroup } from "@/services/api/user-groups";
 
 export type LocalUser = {
     id: string;
@@ -18,6 +19,7 @@ export type LocalUser = {
     identityUsername?: string;
     role: "admin" | "user";
     status: "active" | "disabled";
+    userGroup?: string;
     lastLoginAt?: string;
     createdAt?: string;
     updatedAt?: string;
@@ -70,11 +72,14 @@ type UserStore = {
     drawingEngine: CanvasDrawingEngineSetting;
     features: FeatureAvailability;
     referralAvailable: boolean;
+    /** 当前账号分组的展示信息（徽章、折扣）；由会话接口下发。 */
+    userGroup: PublicUserGroup | null;
     setUser: (user: LocalUser | null, options?: { newSession?: boolean }) => void;
     setRuntimeLimits: (limits?: RuntimeLimits) => void;
     setDrawingEngine: (setting?: CanvasDrawingEngineSetting) => void;
     setFeatures: (features?: FeatureAvailability) => void;
     setReferralAvailable: (available?: boolean) => void;
+    setUserGroup: (group?: PublicUserGroup | null) => void;
     setHydrated: (hydrated: boolean) => void;
     clearSession: () => void;
 };
@@ -87,6 +92,7 @@ export const useUserStore = create<UserStore>()((set) => ({
     drawingEngine: { defaultEngine: DEFAULT_DRAWING_ENGINE },
     features: defaultFeatureAvailability,
     referralAvailable: false,
+    userGroup: null,
     // Profile updates keep the session; login/logout and account switches fence
     // pending requests even when the next session returns to the same user ID.
     setUser: (user, options) => set((state) => ({ user, sessionVersion: state.sessionVersion + (options?.newSession || state.user?.id !== user?.id ? 1 : 0) })),
@@ -94,6 +100,7 @@ export const useUserStore = create<UserStore>()((set) => ({
     setDrawingEngine: (drawingEngine) => set({ drawingEngine: drawingEngine || { defaultEngine: DEFAULT_DRAWING_ENGINE } }),
     setFeatures: (features) => set({ features: features ? { ...defaultFeatureAvailability, ...features } : defaultFeatureAvailability }),
     setReferralAvailable: (available) => set({ referralAvailable: Boolean(available) }),
+    setUserGroup: (userGroup) => set({ userGroup: userGroup || null }),
     setHydrated: (hydrated) => set({ hydrated }),
-    clearSession: () => set((state) => ({ user: null, sessionVersion: state.sessionVersion + 1, runtimeLimits: { activeTaskLimit: 5, resourceUploadMB: 50, recycleBinRetentionDays: 30 }, drawingEngine: { defaultEngine: DEFAULT_DRAWING_ENGINE }, features: defaultFeatureAvailability, referralAvailable: false })),
+    clearSession: () => set((state) => ({ user: null, sessionVersion: state.sessionVersion + 1, runtimeLimits: { activeTaskLimit: 5, resourceUploadMB: 50, recycleBinRetentionDays: 30 }, drawingEngine: { defaultEngine: DEFAULT_DRAWING_ENGINE }, features: defaultFeatureAvailability, referralAvailable: false, userGroup: null })),
 }));

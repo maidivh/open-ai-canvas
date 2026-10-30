@@ -12,7 +12,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 73
+const CurrentSchemaVersion int64 = 78
 
 const baselineSchemaChecksum = "sha256:open-ai-canvas-schema-v1-20260830"
 const schemaMigrationAppliedAtIndexChecksum = "sha256:schema-migrations-applied-at-index-v2-20260830"
@@ -257,7 +257,85 @@ var schemaMigrations = []migration{
 	}},
 	{version: 71, name: "drama_segment_mode", checksum: "sha256:drama-segment-mode-v71-20261026", apply: migrateDramaSegmentMode},
 	{version: 72, name: "referral_center", checksum: "sha256:referral-center-v72-20261027", apply: migrateReferralCenter},
-	{version: 73, name: "shared_wallet_billing", checksum: "sha256:shared-wallet-billing-v58-20261019", apply: func(tx *gorm.DB) error { return tx.AutoMigrate(&model.BillingOrder{}, &model.WalletOperation{}) }},
+	{version: 73, name: "drama_episode_source_format", checksum: "sha256:drama-episode-source-format-v73-20261027", apply: func(tx *gorm.DB) error {
+		// 旧集没有素材类型，空串按小说原文处理。
+		if tx.Migrator().HasColumn(&model.DramaEpisode{}, "SourceFormat") {
+			return nil
+		}
+		return tx.Migrator().AddColumn(&model.DramaEpisode{}, "SourceFormat")
+	}},
+	{version: 74, name: "drama_segment_references", checksum: "sha256:drama-segment-references-v74-20261027", apply: func(tx *gorm.DB) error {
+		// 空串表示按镜头自动取参考图，旧段保持原行为。
+		if tx.Migrator().HasColumn(&model.DramaSegment{}, "ReferenceCastIDsJSON") {
+			return nil
+		}
+		return tx.Migrator().AddColumn(&model.DramaSegment{}, "ReferenceCastIDsJSON")
+	}},
+	{version: 75, name: "user_groups_pricing_currency", checksum: "sha256:user-groups-pricing-currency-v75-20261028", apply: migrateUserGroupsPricingCurrency},
+	{version: 76, name: "agent_memory_document_skill_discovery", checksum: "sha256:agent-memory-document-skill-discovery-v76-20261028", apply: migrateAgentMemoryDocumentSkillDiscovery},
+	{version: 77, name: "agent_memory_document_columns", checksum: "sha256:agent-memory-document-columns-v77-20261028", apply: migrateAgentMemoryDocumentColumns},
+	{version: 78, name: "shared_wallet_billing", checksum: "sha256:shared-wallet-billing-v58-20261019", apply: func(tx *gorm.DB) error { return tx.AutoMigrate(&model.BillingOrder{}, &model.WalletOperation{}) }},
+}
+
+// migrateAgentMemoryDocumentColumns 补齐记忆文件的条目序号与修订的工具调用 ID。
+// 早期构建执行 v76 时这两列还不存在，v76 已记为完成不会重跑；新库由 v76 建全，这里是空操作。
+func migrateAgentMemoryDocumentColumns(tx *gorm.DB) error {
+	if err := tx.AutoMigrate(&model.AgentMemoryDocument{}, &model.AgentMemoryDocumentRevision{}); err != nil {
+		return err
+	}
+	// 新增列对旧行是 NULL；写成零值，与新建行一致。
+	if err := tx.Model(&model.AgentMemoryDocument{}).Where("next_entry_seq IS NULL").Update("next_entry_seq", 0).Error; err != nil {
+		return err
+	}
+	return tx.Model(&model.AgentMemoryDocumentRevision{}).Where("call_id IS NULL").Update("call_id", "").Error
+}
+
+// migrateAgentMemoryDocumentSkillDiscovery 新建用户记忆文件及其修订表，并给用户技能状态补
+// Agent 自动发现模式与读取统计列。旧状态 agent_mode 为空，按 auto 处理，行为与“已安装即可发现”一致。
+func migrateAgentMemoryDocumentSkillDiscovery(tx *gorm.DB) error {
+	if err := tx.AutoMigrate(&model.AgentMemoryDocument{}, &model.AgentMemoryDocumentRevision{}); err != nil {
+		return err
+	}
+	for _, field := range []string{"AgentMode", "AgentUseCount", "AgentLastUsedAt"} {
+		if tx.Migrator().HasColumn(&model.UserSkillState{}, field) {
+			continue
+		}
+		if err := tx.Migrator().AddColumn(&model.UserSkillState{}, field); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// migrateUserGroupsPricingCurrency 增加用户分组、分组渠道绑定，以及模型计价货币、充值商品货币和账单分组快照列。
+// 旧用户 user_group 为空（归入 default），旧模型按积分计价，旧商品按人民币计价，计费结果不变。
+func migrateUserGroupsPricingCurrency(tx *gorm.DB) error {
+	if err := tx.AutoMigrate(&model.UserGroup{}, &model.UserGroupChannel{}); err != nil {
+		return err
+	}
+	columns := []struct {
+		model any
+		field string
+	}{
+		{&model.User{}, "UserGroup"},
+		{&model.ChannelModel{}, "PriceCurrency"},
+		{&model.TopupProduct{}, "Currency"},
+		{&model.BillingOrder{}, "UserGroup"},
+		{&model.BillingOrder{}, "PriceCurrency"},
+		{&model.BillingOrder{}, "CurrencyRateMicrocredits"},
+	}
+	for _, column := range columns {
+		if tx.Migrator().HasColumn(column.model, column.field) {
+			continue
+		}
+		if err := tx.Migrator().AddColumn(column.model, column.field); err != nil {
+			return err
+		}
+	}
+	if !tx.Migrator().HasIndex(&model.User{}, "UserGroup") {
+		return tx.Migrator().CreateIndex(&model.User{}, "UserGroup")
+	}
+	return nil
 }
 
 // migrateReferralCenter 增加推广人标记和推广码、绑定、返佣三张表；旧用户默认不是推广人。
@@ -479,8 +557,8 @@ func migrationsForDatabase(db *gorm.DB) ([]migration, error) {
 			}
 		}
 	}
-	// v58/v61 在已发布分支中分别记录过记忆、钱包或短剧，不能改写这些记录。
-	var memory, wallet, drama migration
+	// v58/v61/v73 在已发布分支中记录过不同迁移，按历史安排缺少的迁移，不能改写旧记录。
+	var memory, wallet, drama, episodeSource migration
 	for _, item := range plan {
 		switch item.version {
 		case 58:
@@ -488,6 +566,8 @@ func migrationsForDatabase(db *gorm.DB) ([]migration, error) {
 		case 61:
 			drama = item
 		case 73:
+			episodeSource = item
+		case 78:
 			wallet = item
 		}
 	}
@@ -515,7 +595,21 @@ func migrationsForDatabase(db *gorm.DB) ([]migration, error) {
 			}
 		}
 	}
-	if drama.version == 73 {
+	if drama.version != 73 {
+		applied = schemaMigration{}
+		err = db.First(&applied, "version = ?", 73).Error
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("读取数据库迁移 73：%w", err)
+		}
+		if err == nil && applied.Name == wallet.name {
+			wallet.version = 73
+			if err := validateMigrationRecord(applied, wallet); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if wallet.version != 78 {
+		episodeSource.version = 78
 		ordered := make([]migration, 0, len(plan))
 		for _, item := range plan {
 			switch item.version {
@@ -524,15 +618,21 @@ func migrationsForDatabase(db *gorm.DB) ([]migration, error) {
 					item = wallet
 				}
 			case 61:
-				item = wallet
 				if walletAt58 {
 					item = memory
+				} else if wallet.version == 61 {
+					item = wallet
 				}
 			case 73:
-				continue
+				if drama.version == 73 {
+					continue
+				}
+				item = wallet
+			case 78:
+				item = episodeSource
 			}
 			ordered = append(ordered, item)
-			if item.version == 61 {
+			if item.version == 61 && drama.version == 73 {
 				// 短剧表必须先于依赖它的 v62–v71 创建，即使它在此历史中编号为 73。
 				ordered = append(ordered, drama)
 			}
