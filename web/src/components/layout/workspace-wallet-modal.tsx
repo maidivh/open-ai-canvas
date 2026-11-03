@@ -152,7 +152,9 @@ export function WorkspaceWalletModal({
         setPage(1);
         setWallet(null);
         void reloadWallet(1);
-        return () => { requestSequence.current += 1; };
+        return () => {
+            requestSequence.current += 1;
+        };
     }, [open, userId, features.walletMode, creditsEnabled, initialTab, initialCategory]);
 
     useEffect(() => {
@@ -173,14 +175,23 @@ export function WorkspaceWalletModal({
                 );
                 setSelectedProviderId((current) => current || usableProviders[0]?.id || "");
             })
-            .catch((error) => { if (active) message.error(error instanceof Error ? error.message : "读取充值配置失败"); })
-            .finally(() => { if (active) setPaymentsLoading(false); });
-        return () => { active = false; };
+            .catch((error) => {
+                if (active) message.error(error instanceof Error ? error.message : "读取充值配置失败");
+            })
+            .finally(() => {
+                if (active) setPaymentsLoading(false);
+            });
+        return () => {
+            active = false;
+        };
     }, [open, localActionsAllowed, creditsEnabled, initialCategory]);
 
     useEffect(() => {
         if (!open || !external) return;
-        const refresh = () => { void reloadWallet(page); window.dispatchEvent(new CustomEvent("wallet:updated")); };
+        const refresh = () => {
+            void reloadWallet(page);
+            window.dispatchEvent(new CustomEvent("wallet:updated"));
+        };
         window.addEventListener("focus", refresh);
         return () => window.removeEventListener("focus", refresh);
     }, [open, external, page]);
@@ -308,10 +319,12 @@ export function WorkspaceWalletModal({
                                 <WalletCards />
                                 充值
                             </button>
-                            {localActionsAllowed ? <button type="button" role="tab" aria-selected={activeTab === "redeem"} onClick={() => setTab("redeem")}>
-                                <TicketCheck />
-                                兑换
-                            </button> : null}
+                            {localActionsAllowed ? (
+                                <button type="button" role="tab" aria-selected={activeTab === "redeem"} onClick={() => setTab("redeem")}>
+                                    <TicketCheck />
+                                    兑换
+                                </button>
+                            ) : null}
                             <button type="button" role="tab" aria-selected={activeTab === "history"} onClick={() => setTab("history")}>
                                 <History />
                                 积分消耗历史
@@ -321,18 +334,56 @@ export function WorkspaceWalletModal({
 
                     {activeTab === "topup" ? (
                         <WalletTopupPanel
-                            creditsNotice={creditsEnabled && external ? (
-                                <section className="workspace-wallet-section">
-                                    <div className="workspace-wallet-section-heading"><div><h3>在小洞AI充值</h3><p>充值到账后返回此页刷新余额。外部计费按每笔账单向上取整，批量任务分别计费；原 Canvas 内部积分保留。</p></div><WalletCards /></div>
-                                    {walletError ? <div className="workspace-wallet-inline-state is-error"><CircleAlert /><div><strong>余额暂不可用</strong><span>{walletError}</span></div></div> : null}
-                                    <div className="workspace-wallet-provider-row">
-                                        {rechargeUrl ? <Button type="primary" size="large" href={rechargeUrl} target="_blank" rel="noopener noreferrer">前往小洞AI充值</Button> : <span>充值入口尚未配置，请联系管理员。</span>}
-                                        <Button icon={<RefreshCw />} loading={walletLoading} onClick={() => { void reloadWallet(page); window.dispatchEvent(new CustomEvent("wallet:updated")); }}>刷新余额</Button>
+                            creditsNotice={
+                                creditsEnabled && external ? (
+                                    <section className="workspace-wallet-section">
+                                        <div className="workspace-wallet-section-heading">
+                                            <div>
+                                                <h3>在小洞AI充值</h3>
+                                                <p>充值到账后返回此页刷新余额。外部计费按每笔账单向上取整，批量任务分别计费；原 Canvas 内部积分保留。</p>
+                                            </div>
+                                            <WalletCards />
+                                        </div>
+                                        {walletError ? (
+                                            <div className="workspace-wallet-inline-state is-error">
+                                                <CircleAlert />
+                                                <div>
+                                                    <strong>余额暂不可用</strong>
+                                                    <span>{walletError}</span>
+                                                </div>
+                                            </div>
+                                        ) : null}
+                                        <div className="workspace-wallet-provider-row">
+                                            {rechargeUrl ? (
+                                                <Button type="primary" size="large" href={rechargeUrl} target="_blank" rel="noopener noreferrer">
+                                                    前往小洞AI充值
+                                                </Button>
+                                            ) : (
+                                                <span>充值入口尚未配置，请联系管理员。</span>
+                                            )}
+                                            <Button
+                                                icon={<RefreshCw />}
+                                                loading={walletLoading}
+                                                onClick={() => {
+                                                    void reloadWallet(page);
+                                                    window.dispatchEvent(new CustomEvent("wallet:updated"));
+                                                }}
+                                            >
+                                                刷新余额
+                                            </Button>
+                                        </div>
+                                    </section>
+                                ) : creditsEnabled && walletError ? (
+                                    <div className="workspace-wallet-inline-state is-error">
+                                        <CircleAlert />
+                                        <div>
+                                            <strong>积分账户暂不可用</strong>
+                                            <span>{walletError}</span>
+                                        </div>
+                                        <Button onClick={() => void reloadWallet(page)}>重试</Button>
                                     </div>
-                                </section>
-                            ) : creditsEnabled && walletError ? (
-                                <div className="workspace-wallet-inline-state is-error"><CircleAlert /><div><strong>积分账户暂不可用</strong><span>{walletError}</span></div><Button onClick={() => void reloadWallet(page)}>重试</Button></div>
-                            ) : undefined}
+                                ) : undefined
+                            }
                             loading={paymentsLoading}
                             products={visibleProducts}
                             providers={providers}
@@ -460,7 +511,10 @@ function WalletLedgerRow({ entry, external }: { entry: CreditLedgerEntry; extern
         <article className="workspace-wallet-ledger-row">
             <span className={cn("workspace-wallet-ledger-icon", positive ? "is-income" : "is-consume")}>{positive ? <Coins /> : <CreditCard />}</span>
             <div>
-                <strong>{title}{external ? " · 小洞AI" : ""}</strong>
+                <strong>
+                    {title}
+                    {external ? " · 小洞AI" : ""}
+                </strong>
                 <span>{[entry.scene, entry.model, note].filter(Boolean).join(" · ") || "积分账户变动"}</span>
             </div>
             <time>{new Date(entry.createdAt).toLocaleString("zh-CN", { hour12: false })}</time>

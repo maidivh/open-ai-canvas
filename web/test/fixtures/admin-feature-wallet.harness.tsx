@@ -3,7 +3,25 @@ import { Window } from "happy-dom";
 
 const dom = new Window({ url: "http://localhost/" });
 const originals = new Map<string, PropertyDescriptor | undefined>();
-for (const [key, value] of Object.entries({ window: dom, document: dom.document, navigator: dom.navigator, localStorage: dom.localStorage, HTMLElement: dom.HTMLElement, HTMLInputElement: dom.HTMLInputElement, HTMLAnchorElement: dom.HTMLAnchorElement, MouseEvent: dom.MouseEvent, Element: dom.Element, Node: dom.Node, Text: dom.Text, SVGElement: dom.SVGElement, ShadowRoot: dom.ShadowRoot, CustomEvent: dom.CustomEvent, getComputedStyle: dom.getComputedStyle.bind(dom), ResizeObserver: dom.ResizeObserver, IS_REACT_ACT_ENVIRONMENT: true })) {
+for (const [key, value] of Object.entries({
+    window: dom,
+    document: dom.document,
+    navigator: dom.navigator,
+    localStorage: dom.localStorage,
+    HTMLElement: dom.HTMLElement,
+    HTMLInputElement: dom.HTMLInputElement,
+    HTMLAnchorElement: dom.HTMLAnchorElement,
+    MouseEvent: dom.MouseEvent,
+    Element: dom.Element,
+    Node: dom.Node,
+    Text: dom.Text,
+    SVGElement: dom.SVGElement,
+    ShadowRoot: dom.ShadowRoot,
+    CustomEvent: dom.CustomEvent,
+    getComputedStyle: dom.getComputedStyle.bind(dom),
+    ResizeObserver: dom.ResizeObserver,
+    IS_REACT_ACT_ENVIRONMENT: true,
+})) {
     originals.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
     Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
 }
@@ -27,30 +45,55 @@ let host: HTMLDivElement;
 
 beforeEach(() => {
     persisted = { ...defaultFeatureAvailability, creditsEnabled: false };
-    mode = "external"; includeConfigured = true; omitConfiguredCredits = false; patches = [];
+    mode = "external";
+    includeConfigured = true;
+    omitConfiguredCredits = false;
+    patches = [];
     useUserStore.getState().setFeatures(defaultFeatureAvailability);
     apiClient.defaults.adapter = async (config) => {
         if (config.url !== "/admin/settings/features") throw new Error(`Unexpected request: ${config.url}`);
         if (config.method === "patch") {
             const body = JSON.parse(config.data);
             patches.push(body);
-            persisted = { ...persisted, ...body, creditsEnabled: mode === "external" ? persisted.creditsEnabled : body.creditsEnabled ?? persisted.creditsEnabled };
+            persisted = { ...persisted, ...body, creditsEnabled: mode === "external" ? persisted.creditsEnabled : (body.creditsEnabled ?? persisted.creditsEnabled) };
         }
         const configured: Partial<typeof persisted> = { ...persisted };
         if (omitConfiguredCredits) delete configured.creditsEnabled;
         const features = {
-            ...persisted, walletMode: mode, creditsEnabled: mode === "external" || persisted.creditsEnabled,
+            ...persisted,
+            walletMode: mode,
+            creditsEnabled: mode === "external" || persisted.creditsEnabled,
             ...(includeConfigured ? { configuredFeatures: configured } : {}),
         };
         return { data: { code: 0, data: { features }, msg: "ok" }, status: 200, statusText: "OK", headers: {}, config };
     };
-    host = document.createElement("div"); document.body.append(host); root = createRoot(host);
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
 });
-afterEach(async () => { await act(async () => root.unmount()); host.remove(); });
-afterAll(() => { apiClient.defaults.adapter = originalAdapter; dom.happyDOM.abort(); for (const [key, descriptor] of originals) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); } });
+afterEach(async () => {
+    await act(async () => root.unmount());
+    host.remove();
+});
+afterAll(() => {
+    apiClient.defaults.adapter = originalAdapter;
+    dom.happyDOM.abort();
+    for (const [key, descriptor] of originals) {
+        if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+        else Reflect.deleteProperty(globalThis, key);
+    }
+});
 const tick = () => new Promise((resolve) => setTimeout(resolve, 10));
 async function render(welcome = false) {
-    await act(async () => { root.render(<MemoryRouter><ConfigProvider theme={{ token: { motion: false } }}><App>{welcome ? <WelcomeSetting /> : <FeatureAvailabilityPanel />}</App></ConfigProvider></MemoryRouter>); });
+    await act(async () => {
+        root.render(
+            <MemoryRouter>
+                <ConfigProvider theme={{ token: { motion: false } }}>
+                    <App>{welcome ? <WelcomeSetting /> : <FeatureAvailabilityPanel />}</App>
+                </ConfigProvider>
+            </MemoryRouter>,
+        );
+    });
     await act(tick);
 }
 function toggle(label: string) {
@@ -116,7 +159,8 @@ test("external legacy response without persisted settings cannot become an edita
 });
 
 test("internal legacy response remains editable", async () => {
-    includeConfigured = false; mode = "internal";
+    includeConfigured = false;
+    mode = "internal";
     await render();
     await changeTaskCenter();
     expect(persisted.creditsEnabled).toBe(false);

@@ -31,7 +31,9 @@ function subscribeWalletRefresh(queryClient: QueryClient, userId: string, sessio
                 return queryClient.invalidateQueries({ queryKey, exact: true }, { cancelRefetch: false });
             });
         };
-        const handleVisible = () => { if (document.visibilityState !== "hidden") handleUpdated(); };
+        const handleVisible = () => {
+            if (document.visibilityState !== "hidden") handleUpdated();
+        };
         window.addEventListener("wallet:updated", handleUpdated);
         window.addEventListener("focus", handleVisible);
         document.addEventListener("visibilitychange", handleVisible);
@@ -90,7 +92,8 @@ export function useWalletBalance(userId?: string, enabled = true) {
             if (wallet.account.userId !== activeUserId) throw new Error("积分账户与当前用户不一致");
             const current = useUserStore.getState();
             // 公共刷新会替换 features 对象；只有钱包配置变化才使余额快照失效。
-            if (current.sessionVersion !== sessionVersion || current.features.walletMode !== features.walletMode || current.features.creditsEnabled !== features.creditsEnabled || current.features.rechargeUrl !== features.rechargeUrl) throw new DOMException("钱包状态已更新", "AbortError");
+            if (current.sessionVersion !== sessionVersion || current.features.walletMode !== features.walletMode || current.features.creditsEnabled !== features.creditsEnabled || current.features.rechargeUrl !== features.rechargeUrl)
+                throw new DOMException("钱包状态已更新", "AbortError");
             const walletMode = wallet.walletMode || features.walletMode || "internal";
             const rechargeUrl = wallet.rechargeUrl ?? features.rechargeUrl;
             if (features.walletMode !== walletMode || features.rechargeUrl !== rechargeUrl) {
@@ -114,8 +117,8 @@ export function useWalletBalance(userId?: string, enabled = true) {
     const walletMode = publicMode ?? query.data?.walletMode ?? "internal";
     const available = enabled && activeUserId && !query.isError && query.data?.walletMode === walletMode;
     return {
-        availableMicrocredits: available ? query.data?.availableMicrocredits ?? null : null,
-        policy: available ? query.data?.policy ?? null : null,
+        availableMicrocredits: available ? (query.data?.availableMicrocredits ?? null) : null,
+        policy: available ? (query.data?.policy ?? null) : null,
         walletMode,
         rechargeUrl: publicRechargeUrl ?? query.data?.rechargeUrl,
         error: query.error,

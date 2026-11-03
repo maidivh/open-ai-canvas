@@ -694,7 +694,11 @@ export default function AdminPaymentsPage() {
             }
             scroll
         >
-            {external ? <Callout className="my-4" tone="info" title="当前积分使用小洞AI充值">存储空间套餐仍在本站购买并生效。旧积分订单支付完成后仍到账 Canvas 内部钱包，切回内部模式后可使用。</Callout> : null}
+            {external ? (
+                <Callout className="my-4" tone="info" title="当前积分使用小洞AI充值">
+                    存储空间套餐仍在本站购买并生效。旧积分订单支付完成后仍到账 Canvas 内部钱包，切回内部模式后可使用。
+                </Callout>
+            ) : null}
             <Callout className="my-4" tone="info" title="平台不提供支付退款">
                 管理端仅提供查单、关单和对账。关单前始终先向渠道查单；对账发现已支付未入账订单时会幂等补发积分。
             </Callout>

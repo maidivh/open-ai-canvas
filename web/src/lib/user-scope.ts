@@ -22,7 +22,7 @@ export function isUserScopedPersistenceSuppressed() {
 export function getActiveUserScope() {
     if (typeof window === "undefined") return GUEST_SCOPE;
     // 首次读取沿用已有 scope；后续只由 setActiveUserScope 更新，防止旧草稿被写入新账号缓存。
-    return activeTabScope ??= window.localStorage.getItem(ACTIVE_USER_SCOPE_KEY) || GUEST_SCOPE;
+    return (activeTabScope ??= window.localStorage.getItem(ACTIVE_USER_SCOPE_KEY) || GUEST_SCOPE);
 }
 
 export function setActiveUserScope(userId?: string | null) {

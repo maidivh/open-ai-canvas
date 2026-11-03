@@ -11,11 +11,17 @@ beforeEach(() => {
     values.clear();
     Object.defineProperty(globalThis, "window", {
         configurable: true,
-        value: { localStorage: {
-            getItem: (key: string) => values.get(key) ?? null,
-            setItem: (key: string, value: string) => { values.set(key, value); },
-            removeItem: (key: string) => { values.delete(key); },
-        } },
+        value: {
+            localStorage: {
+                getItem: (key: string) => values.get(key) ?? null,
+                setItem: (key: string, value: string) => {
+                    values.set(key, value);
+                },
+                removeItem: (key: string) => {
+                    values.delete(key);
+                },
+            },
+        },
     });
     setActiveUserScope(null);
 });
@@ -40,9 +46,15 @@ test("actual API requests keep the loaded tab's identity after a shared-cookie a
     setActiveUserScope("old-user");
     window.localStorage.setItem(ACTIVE_USER_SCOPE_KEY, "new-user");
     let identity: unknown;
-    await apiClient.post("/projects", { title: "old draft" }, { adapter: async (config) => {
-        identity = config.headers.get("X-Canvas-User-ID");
-        return { data: {}, status: 200, statusText: "OK", headers: {}, config };
-    } });
+    await apiClient.post(
+        "/projects",
+        { title: "old draft" },
+        {
+            adapter: async (config) => {
+                identity = config.headers.get("X-Canvas-User-ID");
+                return { data: {}, status: 200, statusText: "OK", headers: {}, config };
+            },
+        },
+    );
     expect(identity).toBe("old-user");
 });

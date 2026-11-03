@@ -13,13 +13,17 @@ export function InspirationMediaPreview({ item, showSourceLink }: { item: Creati
             {videoUrl && !failed ? (
                 <video className="block h-56 max-h-[36vh] w-full object-contain sm:h-64" src={videoUrl} poster={item.image} controls playsInline preload="none" aria-label={`${item.title} 视频预览`} onError={() => setFailed(true)} />
             ) : (
-                <div className="inspiration-detail-cover">
-                    {coverFailed ? <MediaPlaceholder failed /> : <img src={item.image} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setCoverFailed(true)} />}
-                </div>
+                <div className="inspiration-detail-cover">{coverFailed ? <MediaPlaceholder failed /> : <img src={item.image} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setCoverFailed(true)} />}</div>
             )}
             {item.mode === "video" ? (
                 <p className="px-5 py-2 text-xs text-foreground/60" role={failed ? "status" : undefined}>
-                    {failed ? (showSourceLink && item.sourceUrl ? "视频暂时无法加载，可通过下方「查看上游内容」访问原案例。" : "视频暂时无法加载，请稍后重新打开重试。") : videoUrl ? "上游案例视频，点击播放预览。" : "此灵感仅提供提示词与封面，暂无视频预览。"}
+                    {failed
+                        ? showSourceLink && item.sourceUrl
+                            ? "视频暂时无法加载，可通过下方「查看上游内容」访问原案例。"
+                            : "视频暂时无法加载，请稍后重新打开重试。"
+                        : videoUrl
+                          ? "上游案例视频，点击播放预览。"
+                          : "此灵感仅提供提示词与封面，暂无视频预览。"}
                 </p>
             ) : null}
         </div>

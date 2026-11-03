@@ -4,7 +4,18 @@ import type { ModelChannel } from "../../src/stores/use-config-store";
 
 const dom = new Window({ url: "http://localhost/" });
 const originals = new Map<string, PropertyDescriptor | undefined>();
-for (const [key, value] of Object.entries({ window: dom, document: dom.document, navigator: dom.navigator, localStorage: dom.localStorage, HTMLElement: dom.HTMLElement, Element: dom.Element, Node: dom.Node, SVGElement: dom.SVGElement, getComputedStyle: dom.getComputedStyle.bind(dom), IS_REACT_ACT_ENVIRONMENT: true })) {
+for (const [key, value] of Object.entries({
+    window: dom,
+    document: dom.document,
+    navigator: dom.navigator,
+    localStorage: dom.localStorage,
+    HTMLElement: dom.HTMLElement,
+    Element: dom.Element,
+    Node: dom.Node,
+    SVGElement: dom.SVGElement,
+    getComputedStyle: dom.getComputedStyle.bind(dom),
+    IS_REACT_ACT_ENVIRONMENT: true,
+})) {
     originals.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
     Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
 }
@@ -19,13 +30,15 @@ const costs: NonNullable<ModelChannel["modelCosts"]> = [
     { model: "video-seconds", capability: "video", billingMode: "per_second", unitPriceMicrocredits: 50_000 },
     { model: "text-token", capability: "text", billingMode: "token", unitPriceMicrocredits: 0, inputTokenPriceMicrocredits: 100_000, outputTokenPriceMicrocredits: 300_000, cachedTokenPriceMicrocredits: 50_000 },
 ];
-const channels = (["system", "user"] as const).map((scope) => createModelChannel({
-    id: scope,
-    name: scope,
-    scope,
-    models: costs.map((cost) => cost.model),
-    modelCosts: costs.map((cost) => ({ ...cost, displayName: `${scope}-${cost.model}` })),
-}));
+const channels = (["system", "user"] as const).map((scope) =>
+    createModelChannel({
+        id: scope,
+        name: scope,
+        scope,
+        models: costs.map((cost) => cost.model),
+        modelCosts: costs.map((cost) => ({ ...cost, displayName: `${scope}-${cost.model}` })),
+    }),
+);
 const config = normalizeConfigSnapshot({ config: { ...defaultConfig, channels } }).config;
 let root: ReturnType<typeof createRoot>;
 let host: HTMLDivElement;
