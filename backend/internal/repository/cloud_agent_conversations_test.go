@@ -74,7 +74,7 @@ func TestCloudAgentConversationAdmissionAcrossConnections(t *testing.T) {
 
 func testCloudAgentConversationAdmission(t *testing.T, a, b *Repository, billed bool) {
 	t.Helper()
-	if err := a.db.AutoMigrate(&model.Task{}, &model.CloudAgentExecution{}, &model.CanvasProject{}, &model.CreditAccount{}, &model.BillingOrder{}, &model.CreditLedgerEntry{}); err != nil {
+	if err := a.db.AutoMigrate(&model.SystemSetting{}, &model.Task{}, &model.CloudAgentExecution{}, &model.CanvasProject{}, &model.CreditAccount{}, &model.BillingOrder{}, &model.CreditLedgerEntry{}); err != nil {
 		t.Fatal(err)
 	}
 	for _, item := range []any{

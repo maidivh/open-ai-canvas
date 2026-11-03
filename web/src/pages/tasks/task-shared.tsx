@@ -27,15 +27,16 @@ export function taskAttentionReason(task: GenerationTask) {
     return task.stage || "生成失败，打开详情查看原因";
 }
 
-export function providerCancelStatusLabel(task: GenerationTask) {
+export function providerCancelStatusLabel(task: Pick<GenerationTask, "providerCancelStatus" | "providerCancelError" | "billing">) {
+    const refundNote = task.billing?.status === "refunded" && task.billing.refundedMicrocredits > 0 ? "，积分已退回" : "";
     if (task.providerCancelStatus === "requested") return "已请求上游取消，正在等待确认";
-    if (task.providerCancelStatus === "confirmed") return "上游已确认取消，积分已退回";
+    if (task.providerCancelStatus === "confirmed") return `上游已确认取消${refundNote}`;
     if (task.providerCancelStatus === "uncertain") {
         if (task.billing?.status === "settled") return "上游未能取消，费用已结算";
-        if (task.billing?.status === "refunded") return "上游取消结果未确认，积分已退回";
+        if (task.billing?.status === "refunded") return `上游取消结果未确认${refundNote}`;
         return task.providerCancelError || "上游无法确认取消，费用待核对";
     }
-    return task.billing?.status === "refunded" ? "任务在调用上游前取消，积分已退回" : "任务已取消，可按原输入重新提交";
+    return task.billing?.status === "refunded" ? `任务在调用上游前取消${refundNote}` : "任务已取消，可按原输入重新提交";
 }
 
 export function statusDotClassName(status: TaskStatus) {

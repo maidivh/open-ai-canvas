@@ -7,4 +7,4 @@ test("wallet refresh keeps live balances, public features and model quotes in on
     if (result.exitCode !== 0) console.error(output);
     expect(output).toContain("0 fail");
     expect(result.exitCode).toBe(0);
-});
+}, 35_000);

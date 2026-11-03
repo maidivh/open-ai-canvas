@@ -24,7 +24,7 @@ export function taskBillingDisplay(billing: TaskBilling): TaskBillingDisplay {
                 tone: "settled",
             };
         case "refunded":
-            return { amount: formatCredits(billing.refundedMicrocredits || billing.reservedMicrocredits), note: "已退回", refundNote: "", tone: "refunded" };
+            return { amount: formatCredits(billing.refundedMicrocredits), note: "已退回", refundNote: "", tone: "refunded" };
         case "uncertain":
             return { amount: formatCredits(billing.reservedMicrocredits), note: "待核对", refundNote: "", tone: "uncertain" };
         default:
