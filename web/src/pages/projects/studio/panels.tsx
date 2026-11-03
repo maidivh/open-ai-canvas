@@ -34,6 +34,8 @@ import { progressFillStyle } from "@/lib/progress-fill";
 import { uploadResourceFile } from "@/services/api/resources";
 import { DramaTakeList } from "./take-list";
 import { CastLibraryPicker } from "./cast-library-picker";
+import { CastVoiceField } from "./cast-voice";
+import { CastLooks } from "./cast-looks";
 
 // 制作台的三个整页视图：设定（角色 / 道具 / 场景）、待处理、制作设置。都在主区域内展示，不使用抽屉遮挡。
 
@@ -101,8 +103,10 @@ export function CastPanel({
     useEffect(() => {
         if (focused) setKind(focused.kind);
     }, [focused]);
-    const ofKind = cast.filter((item) => item.kind === kind);
-    const failed = cast.filter((item) => item.imageStatus === "failed").length;
+    // 造型行（parentId 非空）不在顶层设定列表里单独成卡，而是归到所属角色的详情里。
+    const bases = cast.filter((item) => !item.parentId);
+    const ofKind = bases.filter((item) => item.kind === kind);
+    const failed = bases.filter((item) => item.imageStatus === "failed").length;
     const count = (predicate: (item: DramaCast) => boolean) => ofKind.filter(predicate).length;
     const filters: Array<[CastFilter, string, number]> = [
         ["all", "全部", ofKind.length],
@@ -126,7 +130,7 @@ export function CastPanel({
                         {CAST_KINDS.map((value) => (
                             <button key={value} type="button" role="tab" className="drama-tab" aria-selected={kind === value} onClick={() => setKind(value)}>
                                 {CAST_KIND_LABEL[value]}
-                                <span className="drama-tab-count">{cast.filter((item) => item.kind === value).length}</span>
+                                <span className="drama-tab-count">{bases.filter((item) => item.kind === value).length}</span>
                             </button>
                         ))}
                     </div>
@@ -201,7 +205,16 @@ export function CastPanel({
             </section>
             <aside className="drama-view-side thin-scrollbar">
                 {active ? (
-                    <CastEditor key={active.id} projectId={projectId} cast={active} ratios={ratios} onChanged={onChanged} onOpenCanvas={() => onOpenCanvas(active.id)} canvasOpening={canvasOpening === active.id} />
+                    <CastEditor
+                        key={active.id}
+                        projectId={projectId}
+                        cast={active}
+                        looks={cast.filter((item) => item.parentId === active.id)}
+                        ratios={ratios}
+                        onChanged={onChanged}
+                        onOpenCanvas={() => onOpenCanvas(active.id)}
+                        canvasOpening={canvasOpening === active.id}
+                    />
                 ) : (
                     <div className="drama-empty is-compact">
                         <span>选择一个设定查看详情</span>
@@ -212,7 +225,7 @@ export function CastPanel({
     );
 }
 
-function CastEditor({ projectId, cast, ratios, onChanged, onOpenCanvas, canvasOpening }: { projectId: string; cast: DramaCast; ratios: CastRatios; onChanged: () => void; onOpenCanvas: () => void; canvasOpening: boolean }) {
+function CastEditor({ projectId, cast, looks, ratios, onChanged, onOpenCanvas, canvasOpening }: { projectId: string; cast: DramaCast; looks: DramaCast[]; ratios: CastRatios; onChanged: () => void; onOpenCanvas: () => void; canvasOpening: boolean }) {
     const { message } = App.useApp();
     const [previewing, setPreviewing] = useState(false);
     const [name, setName] = useState(cast.name);
@@ -314,6 +327,12 @@ function CastEditor({ projectId, cast, ratios, onChanged, onOpenCanvas, canvasOp
                     <Input value={voiceInstructions} placeholder="少年音，坚毅，语速偏快" onChange={(event) => setVoiceInstructions(event.target.value)} aria-label="声线" />
                 </Field>
             ) : null}
+            {isCharacter ? (
+                <Field label="声音样本" hint="支持参考音频的视频模型会在该角色开口的剧情段带上这段声音">
+                    <CastVoiceField projectId={projectId} cast={cast} restyle={restyle} onChanged={onChanged} />
+                </Field>
+            ) : null}
+            {isCharacter ? <CastLooks projectId={projectId} character={cast} looks={looks} restyle={restyle} onChanged={onChanged} /> : null}
             <div className="drama-editor-impact">
                 <Checkbox checked={restyle} onChange={(event) => setRestyle(event.target.checked)}>
                     让引用它的剧情段视频重新生成
@@ -650,8 +669,10 @@ export function SettingsPanel({ projectId, summary, cast, onChanged }: { project
     const sampleScene = cast.find((item) => item.kind === "scene" && item.appearance);
     const countOf = (kind: DramaCastKind) => cast.filter((item) => item.kind === kind).length;
     const spent = summary.production.spentMicrocredits;
+    const held = summary.production.heldMicrocredits || 0;
     const budgetMicro = Math.round((budget || 0) * 1_000_000);
-    const usage = budgetMicro > 0 ? Math.min(1, spent / budgetMicro) : 0;
+    // 预算占用与后端判断同一口径：已扣费加冻结中的订单。
+    const usage = budgetMicro > 0 ? Math.min(1, (spent + held) / budgetMicro) : 0;
     return (
         <div className="drama-view">
             <section className="drama-view-main">
@@ -837,10 +858,11 @@ export function SettingsPanel({ projectId, summary, cast, onChanged }: { project
                                 <InputNumber className="!w-full" min={0} precision={0} value={budget} onChange={(value) => setBudget(value || 0)} suffix="积分" aria-label="预算上限" />
                                 <div className="drama-budget-meter">
                                     <div className="drama-budget-track">
-                                        <span className={usage >= 0.9 ? "is-warn" : ""} style={progressFillStyle(budgetMicro ? Math.max(usage * 100, spent ? 2 : 0) : 0)} />
+                                        <span className={usage >= 0.9 ? "is-warn" : ""} style={progressFillStyle(budgetMicro ? Math.max(usage * 100, spent + held ? 2 : 0) : 0)} />
                                     </div>
                                     <span>
                                         已花费 <b>{formatCredits(spent)}</b>
+                                        {held > 0 ? ` · 冻结中 ${formatCredits(held)}` : ""}
                                         {budgetMicro ? ` / ${formatCredits(budgetMicro)}` : " · 不限预算"}
                                     </span>
                                 </div>

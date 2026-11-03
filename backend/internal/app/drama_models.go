@@ -315,10 +315,13 @@ func missingDramaCapabilities(models DramaModels) []string {
 // dramaVideoProfile 是视频模型能力合同中短剧需要的部分：时长档位、支持的生成方式、参考图上限、
 // 是否同步生成声音，以及换算作品画幅所需的比例与分辨率声明。
 type dramaVideoProfile struct {
-	Durations     production.DurationOptions
-	Operations    []string
-	MaxImages     int
-	GenerateAudio bool
+	Durations  production.DurationOptions
+	Operations []string
+	MaxImages  int
+	// MaxAudios / MaxAudioSeconds 是参考音频的张数与单段时长上限（秒，0 表示未声明），用于随段发送角色声音样本。
+	MaxAudios       int
+	MaxAudioSeconds int
+	GenerateAudio   bool
 	// PromptMaxChars 是提示词字符上限（含系统追加的参考图说明），与任务准入同一份能力合同；0 表示不限。
 	PromptMaxChars int
 	video          *VideoCapabilityConfig
@@ -397,9 +400,9 @@ func (s *Service) dramaVideoProfile(choice DramaModelChoice) (dramaVideoProfile,
 		return dramaVideoProfile{}, errors.New("模型未声明视频能力")
 	}
 	video := capability.Video
-	options := production.DurationOptions{Values: video.Duration.Values, Min: video.Duration.Min, Max: video.Duration.Max, Step: video.Duration.Step}
+	options := dramaDurationOptions(video.Duration)
 	// 不声明同步生成声音的模型也可以用：段视频没有对白与音效，由用户在选模型时自行取舍。
-	profile := dramaVideoProfile{Durations: options, Operations: video.Operations, MaxImages: video.References.MaxImages, GenerateAudio: video.GenerateAudio.Supported, PromptMaxChars: max(video.References.PromptMaxChars, 0), video: video}
+	profile := dramaVideoProfile{Durations: options, Operations: video.Operations, MaxImages: video.References.MaxImages, MaxAudios: max(video.References.MaxAudios, 0), MaxAudioSeconds: max(video.References.MaxAudioDuration, 0), GenerateAudio: video.GenerateAudio.Supported, PromptMaxChars: max(video.References.PromptMaxChars, 0), video: video}
 	if profile.maxSeconds() <= 0 {
 		return profile, errors.New("未声明可生成时长，无法按剧情段切分")
 	}
@@ -448,7 +451,7 @@ func (s *Service) EstimateDrama(userID string, req DramaEstimateRequest) (DramaE
 		return DramaEstimate{}, err
 	}
 	// 一个剧情段一次视频调用；智能模式按模型上限估算，是调用次数的下限。
-	segmentSeconds := max(settings.Storyboard.SegmentLimits(profile.maxSeconds()).TargetSeconds(), 1)
+	segmentSeconds := max(settings.Storyboard.SegmentLimits(profile.Durations).TargetSeconds(), 1)
 	segmentsPerEpisode := max(1, int(math.Ceil(float64(settings.EpisodeSeconds)/float64(segmentSeconds))))
 	casts := min(60, 12+episodes/3)
 	estimate := DramaEstimate{
@@ -958,6 +961,18 @@ func dramaVideoResolutionsFor(video *VideoCapabilityConfig) ([]string, string) {
 		fallback = value
 	}
 	return values, fallback
+}
+
+// dramaDurationOptions 只取能力合同里生效的那组时长声明：枚举只用档位，范围只用上下限与步长。
+// 合同切换过选择方式时另一组字段可能残留旧值，混用会选出任务准入拒绝的秒数。
+func dramaDurationOptions(duration VideoDurationConfig) production.DurationOptions {
+	switch duration.Selection {
+	case "enum":
+		return production.DurationOptions{Values: append([]int(nil), duration.Values...)}
+	case "range":
+		return production.DurationOptions{Min: duration.Min, Max: duration.Max, Step: duration.Step}
+	}
+	return production.DurationOptions{Values: duration.Values, Min: duration.Min, Max: duration.Max, Step: duration.Step}
 }
 
 // dramaMaxVideoSeconds 是视频模型单次可生成的最长秒数，也是一个剧情段的时长上限。

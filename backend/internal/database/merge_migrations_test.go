@@ -23,6 +23,9 @@ func TestMergedSchemaPreservesPublishedHistories(t *testing.T) {
 		{"main72", 72, false, false, "drama_production", "drama_episode_source_format", "shared_wallet_billing"},
 		{"main60", 60, false, false, "drama_production", "drama_episode_source_format", "shared_wallet_billing"},
 		{"main77", 77, false, false, "drama_production", "drama_episode_source_format", "shared_wallet_billing"},
+		{"main78", 78, false, false, "drama_production", "drama_episode_source_format", "drama_cast_voice_looks"},
+		{"branch78_wallet78", 78, false, false, "drama_production", "drama_episode_source_format", "shared_wallet_billing"},
+		{"branch78_source78", 78, false, false, "drama_production", "shared_wallet_billing", "drama_episode_source_format"},
 		{"branch73_wallet73", 73, false, false, "drama_production", "shared_wallet_billing", "drama_episode_source_format"},
 		{"branch73_memory58", 73, false, true, "shared_wallet_billing", "drama_production", "drama_episode_source_format"},
 		{"branch73_wallet58", 73, true, false, "agent_memory_proposals", "drama_production", "drama_episode_source_format"},
@@ -49,15 +52,19 @@ func TestMergedSchemaPreservesPublishedHistories(t *testing.T) {
 				if err := db.Where("version > ?", history.version).Delete(&schemaMigration{}).Error; err != nil {
 					t.Fatal(err)
 				}
-				for _, version := range []int64{58, 61, 73} {
+				for _, version := range []int64{58, 61, 73, 78} {
 					var name, checksum string
 					if (version == 58 && history.walletAt58) || (version == 61 && history.walletAt61) {
 						name, checksum = "shared_wallet_billing", "sha256:shared-wallet-billing-v58-20261019"
 					} else if version == 61 && history.walletAt58 {
 						name, checksum = "agent_memory_proposals", "sha256:agent-memory-proposals-v58"
-					} else if version == 73 && history.want73 != "drama_episode_source_format" {
+					} else if version == 73 || version == 78 {
+						want := history.want73
+						if version == 78 {
+							want = history.want78
+						}
 						for _, item := range schemaMigrations {
-							if item.name == history.want73 {
+							if item.name == want {
 								name, checksum = item.name, item.checksum
 							}
 						}
@@ -80,7 +87,7 @@ func TestMergedSchemaPreservesPublishedHistories(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				if !history.walletAt58 && !history.walletAt61 && history.want73 != "shared_wallet_billing" {
+				if !history.walletAt58 && !history.walletAt61 && history.want73 != "shared_wallet_billing" && !(history.version == 78 && history.want78 == "shared_wallet_billing") {
 					absent = append(absent, &model.WalletOperation{})
 					if err := db.Migrator().DropColumn(&model.BillingOrder{}, "WalletMode"); err != nil {
 						t.Fatal(err)
@@ -91,7 +98,15 @@ func TestMergedSchemaPreservesPublishedHistories(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				if history.version >= 72 && history.want78 == "drama_episode_source_format" {
+				if history.version == 78 && history.want78 != "drama_cast_voice_looks" {
+					if err := db.Migrator().DropColumn(&model.DramaCast{}, "VoiceProfileID"); err != nil {
+						t.Fatal(err)
+					}
+					if err := db.Migrator().DropColumn(&model.DramaShot{}, "LookCastIDsJSON"); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if history.version >= 72 && history.version < 78 && history.want78 == "drama_episode_source_format" {
 					if err := db.Migrator().DropColumn(&model.DramaEpisode{}, "SourceFormat"); err != nil {
 						t.Fatal(err)
 					}
@@ -148,7 +163,11 @@ func TestMergedSchemaPreservesPublishedHistories(t *testing.T) {
 					t.Fatalf("existing migration changed: before=%+v after=%+v", old, current)
 				}
 			}
-			for version, want := range map[int64]string{61: history.want61, 73: history.want73, 78: history.want78} {
+			want79 := "drama_cast_voice_looks"
+			if history.want78 == want79 {
+				want79 = "shared_wallet_billing"
+			}
+			for version, want := range map[int64]string{61: history.want61, 73: history.want73, 78: history.want78, 79: want79} {
 				var record schemaMigration
 				if err := db.First(&record, "version = ?", version).Error; err != nil {
 					t.Fatal(err)
@@ -164,6 +183,9 @@ func TestMergedSchemaPreservesPublishedHistories(t *testing.T) {
 			}
 			if !db.Migrator().HasColumn(&model.BillingOrder{}, "WalletMode") || !db.Migrator().HasColumn(&model.AgentMemorySetting{}, "CompactProposalID") {
 				t.Fatal("merged fields missing")
+			}
+			if !db.Migrator().HasColumn(&model.DramaCast{}, "VoiceProfileID") || !db.Migrator().HasColumn(&model.DramaShot{}, "LookCastIDsJSON") {
+				t.Fatal("drama cast voice or shot looks missing")
 			}
 			if !db.Migrator().HasColumn(&model.DramaEpisode{}, "SourceFormat") || !db.Migrator().HasColumn(&model.BillingOrder{}, "UserGroup") || !db.Migrator().HasColumn(&model.AgentMemoryDocument{}, "NextEntrySeq") || !db.Migrator().HasTable(&model.UserGroupChannel{}) {
 				t.Fatal("upstream schema additions missing")
@@ -184,7 +206,7 @@ func TestMergedSchemaPreservesPublishedHistories(t *testing.T) {
 					}
 				}
 			}
-			for _, version := range []int64{58, 61, 73, 78} {
+			for _, version := range []int64{58, 61, 73, 78, 79} {
 				for _, field := range []string{"checksum", "name"} {
 					var original schemaMigration
 					if err := db.First(&original, "version = ?", version).Error; err != nil {

@@ -180,9 +180,12 @@ func (r *dramaRun) syncJobs() error {
 				if !errors.As(err, &deferred) {
 					return err
 				}
-				// 任务或账单暂时读不到：本作业保持运行、下一轮再读，不按失败或 0 花费落账。
-				// 不中断本轮，前面已回写的作业花费随本轮进度一起保存。
-				slog.Warn("drama job sync deferred", "project", r.project.ID, "job", job.ID, "error", deferred.err)
+				// 任务或账单暂时读不到、或订单还没结算：本作业保持运行、下一轮再读，不按失败或 0 花费落账。
+				// 不中断本轮，前面已回写的作业花费随本轮进度一起保存。等待结算是正常过程，不记告警。
+				var pending *dramaPendingBilling
+				if !errors.As(deferred.err, &pending) {
+					slog.Warn("drama job sync deferred", "project", r.project.ID, "job", job.ID, "error", deferred.err)
+				}
 			}
 		}
 		if job.Status == model.DramaJobQueued || job.Status == model.DramaJobRunning {
@@ -261,7 +264,9 @@ type dramaJobContinued struct{ taskID string }
 
 func (e *dramaJobContinued) Error() string { return "作业继续运行：" + e.taskID }
 
-// taskCost 是任务实际结算的花费；读账单出错时返回错误，由调用方推迟到下一轮，不按 0 记账（否则预算被少算）。
+// taskCost 是任务实际扣费：已结算记实收（不含差额退回），已退回记 0。
+// 订单还没结算时返回 dramaPendingBilling，由调用方推迟到下一轮；待人工核对（uncertain）或任务结束超过
+// dramaBillingSettleGrace 仍未结算时按冻结额记，避免作业无限等待。读账单出错同样推迟，不按 0 记账。
 func (r *dramaRun) taskCost(task *model.Task) (int64, error) {
 	if task.BillingOrderID == "" {
 		return 0, nil
@@ -273,10 +278,14 @@ func (r *dramaRun) taskCost(task *model.Task) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	if order.Status == model.BillingStatusRefunded {
-		return 0, nil
+	charged, held, settled := dramaOrderSpend(*order)
+	if settled {
+		return charged, nil
 	}
-	return order.AmountMicrocredits, nil
+	if order.Status != model.BillingStatusUncertain && time.Since(dramaTaskFinishedAt(task)) < dramaBillingSettleGrace {
+		return 0, &dramaPendingBilling{orderID: order.ID}
+	}
+	return held, nil
 }
 
 // failJob 让失败落到具体镜头或设定上，进入“待处理”而不是卡住整条流水线。
@@ -636,20 +645,23 @@ func (r *dramaRun) dispatch() error {
 	}
 	sort.SliceStable(queued, func(i, j int) bool { return queued[i].Priority > queued[j].Priority })
 	capacity := r.settings.Concurrency - r.running
-	// 画布精修花费计入预算；每轮只查一次，流水线花费在本轮内按结算逐项累加。
-	var canvasSpent int64
-	if r.production.BudgetMicrocredits > 0 && len(queued) > 0 {
-		spent, err := r.s.dramaCanvasSpent(r.production)
+	// 预算按订单口径保守判断：流水线与画布精修的实收加上所有未结算订单的冻结额。每轮只汇总一次，
+	// 本轮新提交任务的冻结额逐项累加；同时把流水线实收回写到 spent_microcredits 缓存。
+	var committed int64
+	budgeted := r.production.BudgetMicrocredits > 0 && len(queued) > 0
+	if budgeted {
+		totals, err := r.s.dramaBillingTotals(r.production)
 		if err != nil {
 			return err
 		}
-		canvasSpent = spent
+		committed = totals.ChargedMicrocredits() + totals.HeldMicrocredits()
+		r.production.SpentMicrocredits = totals.PipelineChargedMicrocredits
 	}
 	for i := range queued {
 		if capacity <= 0 {
 			return nil
 		}
-		if r.production.BudgetMicrocredits > 0 && r.production.SpentMicrocredits+canvasSpent >= r.production.BudgetMicrocredits {
+		if budgeted && committed >= r.production.BudgetMicrocredits {
 			r.production.Status, r.production.PauseReason = model.DramaStatusPaused, dramaBudgetPauseReason
 			return nil
 		}
@@ -689,6 +701,16 @@ func (r *dramaRun) dispatch() error {
 			return err
 		}
 		capacity--
+		if budgeted && task.BillingOrderID != "" {
+			order, err := r.s.repo.BillingOrder(task.BillingOrderID)
+			if err != nil {
+				// 读不到刚提交任务的冻结额时本轮不再派发，下一轮按订单重新汇总。
+				slog.Warn("drama dispatch billing read failed", "project", r.project.ID, "task", task.ID, "error", err)
+				return nil
+			}
+			charged, held, _ := dramaOrderSpend(*order)
+			committed += charged + held
+		}
 	}
 	return nil
 }
@@ -760,7 +782,12 @@ func (r *dramaRun) applyBible(task *model.Task) error {
 		casts := make([]model.DramaCast, 0, len(bible.Characters)+len(bible.Props)+len(bible.Scenes))
 		for index, character := range bible.Characters {
 			instructions := strings.TrimSpace(strings.Join(nonEmpty(character.Gender, character.Age, character.Voice), "，"))
-			casts = append(casts, model.DramaCast{ID: newID(), ProjectID: r.project.ID, Kind: "character", Name: truncateRunes(character.Name, 60), AliasesJSON: encodeStringList(character.Aliases), Role: truncateRunes(character.Role, 60), Description: truncateRunes(character.Description, 1000), Appearance: truncateRunes(strings.Join(nonEmpty(character.Gender, character.Age, character.Appearance), "，"), 1000), VoiceInstructions: truncateRunes(instructions, 500), Importance: len(bible.Characters) - index, Position: index, CreatedAt: now, UpdatedAt: now})
+			characterID := newID()
+			casts = append(casts, model.DramaCast{ID: characterID, ProjectID: r.project.ID, Kind: "character", Name: truncateRunes(character.Name, 60), AliasesJSON: encodeStringList(character.Aliases), Role: truncateRunes(character.Role, 60), Description: truncateRunes(character.Description, 1000), Appearance: truncateRunes(strings.Join(nonEmpty(character.Gender, character.Age, character.Appearance), "，"), 1000), VoiceInstructions: truncateRunes(instructions, 500), Importance: len(bible.Characters) - index, Position: index, CreatedAt: now, UpdatedAt: now})
+			// 造型是角色的子行：承载这套造型的名称、外观与默认适用章节，名称/别名/声音沿用所属角色。
+			for lookIndex, look := range character.Looks {
+				casts = append(casts, model.DramaCast{ID: newID(), ProjectID: r.project.ID, Kind: "character", ParentID: characterID, Name: truncateRunes(character.Name, 60), LookName: truncateRunes(look.Name, 60), Appearance: truncateRunes(look.Appearance, 1000), LookFromChapter: int(look.FromChapter), LookToChapter: int(look.ToChapter), Position: index*100 + lookIndex + 1, CreatedAt: now, UpdatedAt: now})
+			}
 		}
 		for index, prop := range bible.Props {
 			casts = append(casts, model.DramaCast{ID: newID(), ProjectID: r.project.ID, Kind: "prop", Name: truncateRunes(prop.Name, 60), AliasesJSON: "[]", Description: truncateRunes(prop.Description, 1000), Appearance: truncateRunes(prop.Appearance, 1000), Position: index, CreatedAt: now, UpdatedAt: now})
@@ -909,14 +936,31 @@ func (r *dramaRun) applyScriptShots(episode *model.DramaEpisode, scripted []prod
 	if err != nil {
 		return err
 	}
+	// 本集对应的原著章节序号（从 1 起），用于按章节选默认造型。
+	chapterNumbers, err := r.dramaEpisodeChapterNumbers(episode)
+	if err != nil {
+		return err
+	}
 	hintByKey := map[string]production.ScriptCast{}
+	lookHints := map[string]production.ScriptCast{}
 	for _, hint := range hints {
+		if hint.Kind == "look" {
+			lookHints[production.NormalizeName(hint.Name)+"|"+production.NormalizeName(hint.Look)] = hint
+			continue
+		}
 		hintByKey[hint.Kind+"|"+production.NormalizeName(hint.Name)] = hint
 	}
 	characters, props, scenes := dramaKindIndex(casts, "character"), dramaKindIndex(casts, "prop"), dramaKindIndex(casts, "scene")
 	now := time.Now()
 	var created []model.DramaCast
 	position := len(casts)
+	// looksByCharacter 既含作品圣经建的造型，也含本集剧本即时建的造型；按名称找本镜要用的造型行。
+	looksByCharacter := map[string][]model.DramaCast{}
+	for _, cast := range casts {
+		if cast.Kind == "character" && cast.ParentID != "" {
+			looksByCharacter[cast.ParentID] = append(looksByCharacter[cast.ParentID], cast)
+		}
+	}
 	resolve := func(index *production.CastIndex, kind string, name string) string {
 		name = strings.TrimSpace(name)
 		if name == "" || production.IsNarrator(name) {
@@ -938,26 +982,56 @@ func (r *dramaRun) applyScriptShots(episode *model.DramaEpisode, scripted []prod
 		index.Add(cast.ID, cast.Name)
 		return cast.ID
 	}
+	// resolveLook 为出镜角色挑出本镜造型行 ID：先看镜头指定的造型名，再看本集默认造型；
+	// 剧本给了新造型名（looks 里有、设定表没有）时即时建一行造型。chapters 是本集章节序号。
+	resolveLook := func(characterID, chosen string) string {
+		if characterID == "" {
+			return ""
+		}
+		existing := looksByCharacter[characterID]
+		if id := dramaResolveShotLook(model.DramaCast{ID: characterID}, existing, chosen, chapterNumbers); id != "" {
+			return id
+		}
+		name := strings.TrimSpace(chosen)
+		if name == "" || production.IsBaseLookName(name) {
+			return ""
+		}
+		hint, ok := lookHints[dramaLookHintKey(casts, characterID)+"|"+production.NormalizeName(name)]
+		if !ok || strings.TrimSpace(hint.Appearance) == "" {
+			return ""
+		}
+		look := model.DramaCast{ID: newID(), ProjectID: r.project.ID, Kind: "character", ParentID: characterID, Name: dramaCastName(casts, created, characterID), LookName: truncateRunes(name, 60), Appearance: truncateRunes(hint.Appearance, 1000), Position: position, CreatedAt: now, UpdatedAt: now}
+		position++
+		created = append(created, look)
+		looksByCharacter[characterID] = append(looksByCharacter[characterID], look)
+		return look.ID
+	}
 	shots := make([]model.DramaShot, 0, len(scripted))
 	for index, item := range scripted {
 		// 剧本列出的人物与道具全部挂到镜头上；每段实际发几张参考图由“每段最多参考图”和模型上限决定，人物优先。
 		castIDs := []string{}
-		for _, name := range item.Characters {
-			if id := resolve(characters, "character", name); id != "" && !containsString(castIDs, id) {
-				castIDs = append(castIDs, id)
+		lookIDs := []string{}
+		resolveCharacter := func(name string) {
+			id := resolve(characters, "character", name)
+			if id == "" || containsString(castIDs, id) {
+				return
+			}
+			castIDs = append(castIDs, id)
+			if lookID := resolveLook(id, item.Looks[strings.TrimSpace(name)]); lookID != "" && !containsString(lookIDs, lookID) {
+				lookIDs = append(lookIDs, lookID)
 			}
 		}
-		speakerID := resolve(characters, "character", item.Speaker)
-		if speakerID != "" && !containsString(castIDs, speakerID) {
-			castIDs = append(castIDs, speakerID)
+		for _, name := range item.Characters {
+			resolveCharacter(name)
 		}
+		resolveCharacter(item.Speaker)
 		propIDs := []string{}
 		for _, name := range item.Props {
 			if id := resolve(props, "prop", name); id != "" && !containsString(propIDs, id) {
 				propIDs = append(propIDs, id)
 			}
 		}
-		shot := model.DramaShot{ID: newID(), ProjectID: r.project.ID, EpisodeID: episode.ID, Position: index, Scene: truncateRunes(item.Scene, 120), SceneCastID: resolve(scenes, "scene", item.Scene), CastIDsJSON: encodeStringList(castIDs), PropIDsJSON: encodeStringList(propIDs), Speaker: truncateRunes(item.Speaker, 60), Dialogue: truncateRunes(item.Dialogue, dramaMaxDialogueRunes), Action: truncateRunes(item.Action, 1000), ShotSize: truncateRunes(item.ShotSize, 30), Camera: truncateRunes(item.Camera, 60), DurationMs: shotMs(item.DurationSeconds, item.Dialogue), ImagePrompt: truncateRunes(item.ImagePrompt, 2000), VideoPrompt: truncateRunes(item.VideoPrompt, 2000), SourceQuote: truncateRunes(item.SourceQuote, 300), Transition: production.NormalizeTransition(item.Transition), CreatedAt: now, UpdatedAt: now}
+		shot := model.DramaShot{ID: newID(), ProjectID: r.project.ID, EpisodeID: episode.ID, Position: index, Scene: truncateRunes(item.Scene, 120), SceneCastID: resolve(scenes, "scene", item.Scene), CastIDsJSON: encodeStringList(castIDs), LookCastIDsJSON: encodeStringList(lookIDs), PropIDsJSON: encodeStringList(propIDs), Speaker: truncateRunes(item.Speaker, 60), Dialogue: truncateRunes(item.Dialogue, dramaMaxDialogueRunes), Action: truncateRunes(item.Action, 1000), ShotSize: truncateRunes(item.ShotSize, 30), Camera: truncateRunes(item.Camera, 60), DurationMs: shotMs(item.DurationSeconds, item.Dialogue), ImagePrompt: truncateRunes(item.ImagePrompt, 2000), VideoPrompt: truncateRunes(item.VideoPrompt, 2000), SourceQuote: truncateRunes(item.SourceQuote, 300), Transition: production.NormalizeTransition(item.Transition), CreatedAt: now, UpdatedAt: now}
 		shots = append(shots, shot)
 	}
 	profile, err := r.s.dramaVideoProfile(r.settings.Models.Video)
@@ -973,7 +1047,7 @@ func (r *dramaRun) applyScriptShots(episode *model.DramaEpisode, scripted []prod
 		}
 		total += shots[i].DurationMs
 	}
-	assignDramaSegments(shots, r.settings.Storyboard.SegmentLimits(profile.maxSeconds()))
+	assignDramaSegments(shots, r.settings.Storyboard.SegmentLimits(profile.Durations))
 	if err := r.s.repo.CreateDramaCasts(created); err != nil {
 		return err
 	}
@@ -988,6 +1062,43 @@ func (r *dramaRun) applyScriptShots(episode *model.DramaEpisode, scripted []prod
 
 // dramaMaxDialogueRunes 是单镜台词的存储上限；远高于分镜规则的单镜字数，只防异常输入，不用于裁剪正常台词。
 const dramaMaxDialogueRunes = 500
+
+// dramaEpisodeChapterNumbers 返回本集引用的原著章节序号（从 1 起，即 position+1），按序号升序去重。
+func (r *dramaRun) dramaEpisodeChapterNumbers(episode *model.DramaEpisode) ([]int, error) {
+	ids := decodeStringList(episode.ChapterIDsJSON)
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	units, err := r.s.repo.DramaChaptersByIDs(r.project.ID, ids)
+	if err != nil {
+		return nil, err
+	}
+	numbers := make([]int, 0, len(units))
+	for _, unit := range units {
+		numbers = append(numbers, unit.Position+1)
+	}
+	return numbers, nil
+}
+
+// dramaLookHintKey 返回角色的标准名归一后作为造型提示键的前缀；造型提示按角色名 + 造型名归并。
+func dramaLookHintKey(casts []model.DramaCast, characterID string) string {
+	for _, cast := range casts {
+		if cast.ID == characterID {
+			return production.NormalizeName(cast.Name)
+		}
+	}
+	return ""
+}
+
+// dramaCastName 在已入库与本轮新建的设定里找角色名，供造型行沿用。
+func dramaCastName(casts, created []model.DramaCast, characterID string) string {
+	for _, cast := range append(append([]model.DramaCast{}, casts...), created...) {
+		if cast.ID == characterID {
+			return cast.Name
+		}
+	}
+	return ""
+}
 
 func dramaKindIndex(casts []model.DramaCast, kind string) *production.CastIndex {
 	index := production.NewCastIndex()
@@ -1190,7 +1301,7 @@ func (r *dramaRun) segmentPromptBudget(profile dramaVideoProfile, draft dramaSeg
 		}
 	}
 	// 预演失败（如画幅不符）不阻止撰写：提交视频时会报出同一原因，届时也会再核对一次字数。
-	request, _, _ := r.s.prepareDramaSegment(r.settings, draft, *segment, previous, casts)
+	request, _, _, _ := r.s.prepareDramaSegment(r.settings, draft, *segment, previous, casts)
 	header := utf8.RuneCountInString(request.Header)
 	budget := profile.PromptMaxChars - header - 2
 	if budget < dramaMinPromptBudget {
@@ -1428,7 +1539,7 @@ func (r *dramaRun) submitScript(job *model.DramaJob) (*model.Task, bool, error) 
 		return nil, false, err
 	}
 	prompt := production.ScriptPrompt(production.ScriptContext{
-		Segment: r.settings.Storyboard.SegmentLimits(profile.maxSeconds()),
+		Segment: r.settings.Storyboard.SegmentLimits(profile.Durations),
 		Title:   r.project.Name, Settings: r.settings.Settings, VisualRules: r.meta.VisualRules,
 		EpisodeNumber: episode.Number, EpisodeTitle: episode.Title, Synopsis: episode.Synopsis, Hook: episode.Hook, Cliffhanger: episode.Cliffhanger,
 		CastSummary: r.castSummary("character", 30), PropSummary: r.castSummary("prop", 20), SceneSummary: r.castSummary("scene", 20), SourceChapters: chapters,
@@ -1446,7 +1557,25 @@ func (r *dramaRun) submitCastImage(job *model.DramaJob) (*model.Task, bool, erro
 	}
 	appearance := firstNonEmpty(cast.Appearance, cast.Description, cast.Role)
 	assets := r.settings.Assets
+	// 造型行：以所属角色的参考图为底图做图生图，保持五官、脸型一致，只换服装、发型与妆容。
+	var baseImage *model.DramaCast
+	operation := "text_to_image"
+	if cast.ParentID != "" {
+		base, baseErr := r.s.repo.DramaCast(r.project.ID, cast.ParentID)
+		if baseErr != nil {
+			return nil, false, baseErr
+		}
+		// 底图还没生成：等角色本体参考图就绪后再排造型，保证同一张脸。
+		if base.ImageStatus != model.DramaMediaReady || base.ImageResourceID == "" {
+			return nil, true, nil
+		}
+		baseImage = base
+		operation = "image_to_image"
+	}
 	prompt := production.CastImagePrompt(assets, cast.Kind, cast.Name, appearance, r.settings.StylePrompt, r.meta.VisualRules)
+	if baseImage != nil {
+		prompt = "参考图1是角色" + cast.Name + "的既有形象。保持五官、脸型、体态与参考图1完全一致，只把造型改为：" + appearance + "。" + r.settings.StylePrompt
+	}
 	// 资产参考图统一横版 16:9，与作品画幅无关：场景要容纳完整空间，道具要留足展示余量。
 	// 角色按参考图方案的画幅（内置方案均为 16:9，自定义方案可改）。画幅通过尺寸参数约束，
 	// 不只靠提示词；模型给不出接近的尺寸时直接失败并说明原因，不退回模型默认的方图。
@@ -1463,7 +1592,14 @@ func (r *dramaRun) submitCastImage(job *model.DramaJob) (*model.Task, bool, erro
 	config := map[string]any{"count": "1"}
 	request.apply(config)
 	input := map[string]any{"config": config, "metadata": metadata}
-	task, err := r.createTaskWith(r.settings.Models.imageFor(cast.Kind), "image", "text_to_image", prompt, input)
+	if baseImage != nil {
+		ref, refErr := r.s.dramaResourceReference(baseImage.ImageResourceID, "参考图1", "reference_image")
+		if refErr != nil {
+			return nil, false, refErr
+		}
+		input["referenceImages"] = []any{ref}
+	}
+	task, err := r.createTaskWith(r.settings.Models.imageFor(cast.Kind), "image", operation, prompt, input)
 	return task, false, err
 }
 
