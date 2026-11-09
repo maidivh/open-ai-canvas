@@ -42,7 +42,7 @@ func TestPaymentCloseRPCRequiresConfirmedOutcome(t *testing.T) {
 			if err := db.Create(&config).Error; err != nil {
 				t.Fatal(err)
 			}
-			order := model.PaymentOrder{ID: "payment", UserID: "member", MerchantOrderNo: "merchant", ProviderID: "test", PluginID: "test", ProviderConfigID: config.ID, ProviderConfigVersion: 1, Status: model.PaymentOrderPending, AmountFen: 4900, Currency: "CNY", CreditsMicrocredits: 1000000}
+			order := model.PaymentOrder{ID: "payment", UserID: "member", MerchantOrderNo: "merchant", ProviderID: "test", PluginID: "test", ProviderConfigID: config.ID, ProviderConfigVersion: 1, Status: model.PaymentOrderPending, AmountFen: 4900, Currency: "CNY", ChargeAmountFen: 4900, ChargeCurrency: "CNY", CreditsMicrocredits: 1000000}
 			if err := db.Create(&order).Error; err != nil {
 				t.Fatal(err)
 			}

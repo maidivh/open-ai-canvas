@@ -29,6 +29,7 @@ const { act } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { App, ConfigProvider } = await import("antd");
 const { MemoryRouter } = await import("react-router");
+const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
 const { default: FeatureAvailabilityPanel } = await import("../../src/pages/admin/components/feature-availability-panel");
 const { WelcomeSetting } = await import("../../src/pages/admin/settings/components/welcome-setting");
 const { useUserStore, defaultFeatureAvailability } = await import("../../src/stores/use-user-store");
@@ -42,6 +43,7 @@ let omitConfiguredCredits = false;
 let patches: Record<string, unknown>[] = [];
 let root: ReturnType<typeof createRoot>;
 let host: HTMLDivElement;
+let queryClient: InstanceType<typeof QueryClient>;
 
 beforeEach(() => {
     persisted = { ...defaultFeatureAvailability, creditsEnabled: false };
@@ -49,8 +51,10 @@ beforeEach(() => {
     includeConfigured = true;
     omitConfiguredCredits = false;
     patches = [];
+    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     useUserStore.getState().setFeatures(defaultFeatureAvailability);
     apiClient.defaults.adapter = async (config) => {
+        if (config.url === "/admin/settings/inspiration-feed") return { data: { code: 0, data: { status: { enabled: false, total: 0, sources: [], intervalHours: 6 } }, msg: "ok" }, status: 200, statusText: "OK", headers: {}, config };
         if (config.url !== "/admin/settings/features") throw new Error(`Unexpected request: ${config.url}`);
         if (config.method === "patch") {
             const body = JSON.parse(config.data);
@@ -73,6 +77,7 @@ beforeEach(() => {
 });
 afterEach(async () => {
     await act(async () => root.unmount());
+    queryClient.clear();
     host.remove();
 });
 afterAll(() => {
@@ -89,7 +94,9 @@ async function render(welcome = false) {
         root.render(
             <MemoryRouter>
                 <ConfigProvider theme={{ token: { motion: false } }}>
-                    <App>{welcome ? <WelcomeSetting /> : <FeatureAvailabilityPanel />}</App>
+                    <QueryClientProvider client={queryClient}>
+                        <App>{welcome ? <WelcomeSetting /> : <FeatureAvailabilityPanel />}</App>
+                    </QueryClientProvider>
                 </ConfigProvider>
             </MemoryRouter>,
         );
@@ -102,7 +109,7 @@ function toggle(label: string) {
     return control!;
 }
 async function changeTaskCenter() {
-    await act(async () => toggle("设置任务中心，切换后立即保存").click());
+    await act(async () => toggle("任务中心，切换后立即保存").click());
     await act(tick);
 }
 
@@ -111,7 +118,7 @@ for (const original of [false, true]) {
         persisted.creditsEnabled = original;
         await render();
         expect(useUserStore.getState().features.creditsEnabled).toBe(true);
-        const credits = toggle("设置积分计费，切换后立即保存");
+        const credits = toggle("积分计费，切换后立即保存");
         expect(credits.disabled).toBe(true);
         expect(credits.getAttribute("aria-checked")).toBe("true");
         expect(credits.closest("article")?.textContent).toContain("已开放");
@@ -143,7 +150,7 @@ test("stale internal form receives external effective state without replacing it
 test("internal credits can still be explicitly enabled", async () => {
     mode = "internal";
     await render();
-    await act(async () => toggle("设置积分计费，切换后立即保存").click());
+    await act(async () => toggle("积分计费，切换后立即保存").click());
     await act(tick);
     expect(patches[0]!.creditsEnabled).toBe(true);
     expect(persisted.creditsEnabled).toBe(true);
@@ -154,7 +161,7 @@ test("external legacy response without persisted settings cannot become an edita
     includeConfigured = false;
     await render();
     expect(document.body.textContent).toContain("持久");
-    expect(document.querySelector('button[aria-label="设置任务中心，切换后立即保存"]')).toBeNull();
+    expect(document.querySelector('button[aria-label="任务中心，切换后立即保存"]')).toBeNull();
     expect(patches).toHaveLength(0);
 });
 
@@ -171,7 +178,7 @@ test("incomplete persisted settings cannot fall back to effective credits", asyn
     omitConfiguredCredits = true;
     await render();
     expect(document.body.textContent).toContain("缺少有效开关");
-    expect(document.querySelector('button[aria-label="设置任务中心，切换后立即保存"]')).toBeNull();
+    expect(document.querySelector('button[aria-label="任务中心，切换后立即保存"]')).toBeNull();
     expect(patches).toHaveLength(0);
 });
 

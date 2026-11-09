@@ -225,11 +225,18 @@
     white-space: nowrap;
 }
 
-.inspiration-card-video {
+.inspiration-card-badges {
     position: absolute;
-    top: var(--space-2, 8px);
-    left: var(--space-2, 8px);
+    top: var(--space-2);
+    left: var(--space-2);
     z-index: 1;
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    pointer-events: none;
+}
+
+.inspiration-card-video {
     display: inline-flex;
     align-items: center;
     gap: var(--space-1, 4px);
@@ -239,6 +246,17 @@
     color: var(--user-ink);
     font-size: var(--fs-tiny, 10px);
     pointer-events: none;
+}
+
+/* 上新 7 天内的条目：左上角小标签，与右上角的操作按钮错开。 */
+.inspiration-card-new {
+    padding: 0 var(--space-2);
+    border-radius: var(--r-full);
+    background: var(--user-surface-raised);
+    color: var(--user-ink);
+    font-size: var(--fs-tiny);
+    font-weight: 600;
+    line-height: 1.8;
 }
 
 /* 操作与详情按钮是兄弟节点；收藏和展开的菜单始终可见。 */

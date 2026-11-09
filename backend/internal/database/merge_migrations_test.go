@@ -18,20 +18,25 @@ func TestMergedSchemaPreservesPublishedHistories(t *testing.T) {
 		want61     string
 		want73     string
 		want78     string
+		want79     string
 	}{
-		{"fresh", 0, false, false, "drama_production", "drama_episode_source_format", "shared_wallet_billing"},
-		{"main72", 72, false, false, "drama_production", "drama_episode_source_format", "shared_wallet_billing"},
-		{"main60", 60, false, false, "drama_production", "drama_episode_source_format", "shared_wallet_billing"},
-		{"main77", 77, false, false, "drama_production", "drama_episode_source_format", "shared_wallet_billing"},
-		{"main78", 78, false, false, "drama_production", "drama_episode_source_format", "drama_cast_voice_looks"},
-		{"branch78_wallet78", 78, false, false, "drama_production", "drama_episode_source_format", "shared_wallet_billing"},
-		{"branch78_source78", 78, false, false, "drama_production", "shared_wallet_billing", "drama_episode_source_format"},
-		{"branch73_wallet73", 73, false, false, "drama_production", "shared_wallet_billing", "drama_episode_source_format"},
-		{"branch73_memory58", 73, false, true, "shared_wallet_billing", "drama_production", "drama_episode_source_format"},
-		{"branch73_wallet58", 73, true, false, "agent_memory_proposals", "drama_production", "drama_episode_source_format"},
-		{"branch61_memory58", 61, false, true, "shared_wallet_billing", "drama_production", "drama_episode_source_format"},
-		{"branch61_wallet58", 61, true, false, "agent_memory_proposals", "drama_production", "drama_episode_source_format"},
-		{"legacy_wallet58", 58, true, false, "agent_memory_proposals", "drama_production", "drama_episode_source_format"},
+		{"fresh", 0, false, false, "drama_production", "drama_episode_source_format", "drama_cast_voice_looks", "ecommerce_agent_and_knowledge"},
+		{"main72", 72, false, false, "drama_production", "drama_episode_source_format", "drama_cast_voice_looks", "ecommerce_agent_and_knowledge"},
+		{"main60", 60, false, false, "drama_production", "drama_episode_source_format", "drama_cast_voice_looks", "ecommerce_agent_and_knowledge"},
+		{"main77", 77, false, false, "drama_production", "drama_episode_source_format", "drama_cast_voice_looks", "ecommerce_agent_and_knowledge"},
+		{"main78", 78, false, false, "drama_production", "drama_episode_source_format", "drama_cast_voice_looks", "ecommerce_agent_and_knowledge"},
+		{"main79", 79, false, false, "drama_production", "drama_episode_source_format", "drama_cast_voice_looks", "ecommerce_agent_and_knowledge"},
+		{"main92", 92, false, false, "drama_production", "drama_episode_source_format", "drama_cast_voice_looks", "ecommerce_agent_and_knowledge"},
+		{"branch79_wallet79", 79, false, false, "drama_production", "drama_episode_source_format", "drama_cast_voice_looks", "shared_wallet_billing"},
+		{"branch79_wallet78", 79, false, false, "drama_production", "drama_episode_source_format", "shared_wallet_billing", "drama_cast_voice_looks"},
+		{"branch78_wallet78", 78, false, false, "drama_production", "drama_episode_source_format", "shared_wallet_billing", "drama_cast_voice_looks"},
+		{"branch78_source78", 78, false, false, "drama_production", "shared_wallet_billing", "drama_episode_source_format", "drama_cast_voice_looks"},
+		{"branch73_wallet73", 73, false, false, "drama_production", "shared_wallet_billing", "drama_episode_source_format", "drama_cast_voice_looks"},
+		{"branch73_memory58", 73, false, true, "shared_wallet_billing", "drama_production", "drama_episode_source_format", "drama_cast_voice_looks"},
+		{"branch73_wallet58", 73, true, false, "agent_memory_proposals", "drama_production", "drama_episode_source_format", "drama_cast_voice_looks"},
+		{"branch61_memory58", 61, false, true, "shared_wallet_billing", "drama_production", "drama_episode_source_format", "drama_cast_voice_looks"},
+		{"branch61_wallet58", 61, true, false, "agent_memory_proposals", "drama_production", "drama_episode_source_format", "drama_cast_voice_looks"},
+		{"legacy_wallet58", 58, true, false, "agent_memory_proposals", "drama_production", "drama_episode_source_format", "drama_cast_voice_looks"},
 	} {
 		t.Run(history.name, func(t *testing.T) {
 			db, err := Open(Config{Driver: "sqlite", DSN: filepath.Join(t.TempDir(), "merge.db")})
@@ -52,16 +57,19 @@ func TestMergedSchemaPreservesPublishedHistories(t *testing.T) {
 				if err := db.Where("version > ?", history.version).Delete(&schemaMigration{}).Error; err != nil {
 					t.Fatal(err)
 				}
-				for _, version := range []int64{58, 61, 73, 78} {
+				for _, version := range []int64{58, 61, 73, 78, 79} {
 					var name, checksum string
 					if (version == 58 && history.walletAt58) || (version == 61 && history.walletAt61) {
 						name, checksum = "shared_wallet_billing", "sha256:shared-wallet-billing-v58-20261019"
 					} else if version == 61 && history.walletAt58 {
 						name, checksum = "agent_memory_proposals", "sha256:agent-memory-proposals-v58"
-					} else if version == 73 || version == 78 {
+					} else if version >= 73 {
 						want := history.want73
 						if version == 78 {
 							want = history.want78
+						}
+						if version == 79 {
+							want = history.want79
 						}
 						for _, item := range schemaMigrations {
 							if item.name == want {
@@ -87,7 +95,7 @@ func TestMergedSchemaPreservesPublishedHistories(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				if !history.walletAt58 && !history.walletAt61 && history.want73 != "shared_wallet_billing" && !(history.version == 78 && history.want78 == "shared_wallet_billing") {
+				if !history.walletAt58 && !history.walletAt61 && history.want73 != "shared_wallet_billing" && !(history.version >= 78 && history.want78 == "shared_wallet_billing") && !(history.version >= 79 && history.want79 == "shared_wallet_billing") {
 					absent = append(absent, &model.WalletOperation{})
 					if err := db.Migrator().DropColumn(&model.BillingOrder{}, "WalletMode"); err != nil {
 						t.Fatal(err)
@@ -96,6 +104,13 @@ func TestMergedSchemaPreservesPublishedHistories(t *testing.T) {
 				for _, table := range absent {
 					if err := db.Migrator().DropTable(table); err != nil {
 						t.Fatal(err)
+					}
+				}
+				if history.version < 79 || history.want79 != "ecommerce_agent_and_knowledge" {
+					for _, table := range []any{&model.EcommerceProject{}, &model.EcommerceAgentRun{}} {
+						if err := db.Migrator().DropTable(table); err != nil {
+							t.Fatal(err)
+						}
 					}
 				}
 				if history.version == 78 && history.want78 != "drama_cast_voice_looks" {
@@ -163,11 +178,11 @@ func TestMergedSchemaPreservesPublishedHistories(t *testing.T) {
 					t.Fatalf("existing migration changed: before=%+v after=%+v", old, current)
 				}
 			}
-			want79 := "drama_cast_voice_looks"
-			if history.want78 == want79 {
-				want79 = "shared_wallet_billing"
+			want93 := "ecommerce_agent_and_knowledge"
+			if history.want79 == "ecommerce_agent_and_knowledge" {
+				want93 = "shared_wallet_billing"
 			}
-			for version, want := range map[int64]string{61: history.want61, 73: history.want73, 78: history.want78, 79: want79} {
+			for version, want := range map[int64]string{61: history.want61, 73: history.want73, 78: history.want78, 79: history.want79, 93: want93} {
 				var record schemaMigration
 				if err := db.First(&record, "version = ?", version).Error; err != nil {
 					t.Fatal(err)
@@ -183,6 +198,14 @@ func TestMergedSchemaPreservesPublishedHistories(t *testing.T) {
 			}
 			if !db.Migrator().HasColumn(&model.BillingOrder{}, "WalletMode") || !db.Migrator().HasColumn(&model.AgentMemorySetting{}, "CompactProposalID") {
 				t.Fatal("merged fields missing")
+			}
+			for _, table := range []any{&model.EcommerceProject{}, &model.EcommerceKnowledgeSource{}, &model.EcommerceKnowledgeEntry{}, &model.EcommerceAgentAnalysis{}, &model.EcommerceAgentRun{}, &model.EcommerceAgentPage{}, &model.EcommerceAgentCanvasVersion{}} {
+				if !db.Migrator().HasTable(table) {
+					t.Fatalf("missing ecommerce table %T", table)
+				}
+			}
+			if !db.Migrator().HasColumn(&model.EcommerceKnowledgeEntry{}, "KnowledgeDomain") || !db.Migrator().HasIndex(&model.EcommerceKnowledgeEntry{}, "idx_ecommerce_knowledge_domain") {
+				t.Fatal("ecommerce knowledge domain schema missing")
 			}
 			if !db.Migrator().HasColumn(&model.DramaCast{}, "VoiceProfileID") || !db.Migrator().HasColumn(&model.DramaShot{}, "LookCastIDsJSON") {
 				t.Fatal("drama cast voice or shot looks missing")
@@ -206,7 +229,7 @@ func TestMergedSchemaPreservesPublishedHistories(t *testing.T) {
 					}
 				}
 			}
-			for _, version := range []int64{58, 61, 73, 78, 79} {
+			for _, version := range []int64{58, 61, 73, 78, 79, 93} {
 				for _, field := range []string{"checksum", "name"} {
 					var original schemaMigration
 					if err := db.First(&original, "version = ?", version).Error; err != nil {

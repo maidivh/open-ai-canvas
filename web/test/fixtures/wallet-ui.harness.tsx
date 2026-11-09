@@ -76,6 +76,8 @@ beforeEach(() => {
         providerId: "test",
         amountFen: 100,
         currency: "CNY",
+        chargeAmountFen: 100,
+        chargeCurrency: "CNY",
         creditsMicrocredits: 0,
         storageBytes: 1024,
         storageDurationDays: 30,
@@ -100,6 +102,7 @@ beforeEach(() => {
             if (failCatalog) throw new Error("套餐暂时无法读取");
             data = { products };
         } else if (config.url === "/payments/providers") data = { providers: [{ id: "test", name: "测试支付", enabled: true, pluginEnabled: true, configured: true }] };
+        else if (config.url === "/payments/settings") data = { settings: { defaultCurrency: "CNY", usdCnyRate: "7" } };
         else if (config.url === "/payments/orders" || config.url === "/payments/orders/order") data = { order };
         else if (config.url === "/admin/wallet-settings") {
             if (config.method === "put") {
@@ -151,7 +154,21 @@ function button(label: string) {
 }
 
 function mixedProducts(): TopupProduct[] {
-    const common = { amountFen: 100, creditsMicrocredits: 0, storageBytes: 1024, storageDurationDays: 30, enabled: true, sortOrder: 0, saleStrategy: "unlimited" as const, canPurchase: true, createdBy: "", updatedBy: "", createdAt: "", updatedAt: "" };
+    const common = {
+        amountFen: 100,
+        currency: "CNY" as const,
+        creditsMicrocredits: 0,
+        storageBytes: 1024,
+        storageDurationDays: 30,
+        enabled: true,
+        sortOrder: 0,
+        saleStrategy: "unlimited" as const,
+        canPurchase: true,
+        createdBy: "",
+        updatedBy: "",
+        createdAt: "",
+        updatedAt: "",
+    };
     return [
         { ...common, id: "credits", name: "内部积分套餐", kind: "credits" },
         { ...common, id: "storage", name: "存储扩容", kind: "storage" },

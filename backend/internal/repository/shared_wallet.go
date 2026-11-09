@@ -327,11 +327,12 @@ func (r *Repository) QueueWalletOperation(id, action string, duration *int64) (*
 				if err != nil {
 					return err
 				}
-				if err = tx.Model(&order).Updates(map[string]any{"input_tokens": usage.InputTokens, "output_tokens": usage.OutputTokens, "cached_tokens": usage.CachedTokens, "usage_available": source == billingUsageSourceProvider, "usage_source": source}).Error; err != nil {
+				var matchedRule int
+				actual, matchedRule, err = tokenUsageAmount(order, usage)
+				if err != nil {
 					return err
 				}
-				actual, err = tokenUsageAmount(order, usage)
-				if err != nil {
+				if err = tx.Model(&order).Updates(map[string]any{"input_tokens": usage.InputTokens, "output_tokens": usage.OutputTokens, "cached_tokens": usage.CachedTokens, "cache_write_tokens": usage.CacheWriteTokens, "token_price_rule": matchedRule, "usage_available": source == billingUsageSourceProvider, "usage_source": source}).Error; err != nil {
 					return err
 				}
 			} else if order.BillingMode == "per_second" && (order.Capability == "audio" || (order.Capability == "video" && duration != nil)) {
@@ -339,6 +340,9 @@ func (r *Repository) QueueWalletOperation(id, action string, duration *int64) (*
 					return errors.New("按秒结算缺少有效的媒体时长")
 				}
 				quantity := (*duration + 999) / 1000
+				if order.Capability == "video" && order.ReferenceVideoBilled {
+					quantity += (order.ReferenceVideoMillis + 999) / 1000
+				}
 				var err error
 				actual, err = audioBillingAmount(order.UnitPriceMicrocredits, quantity, order.MultiplierBasisPoints)
 				if err != nil {
@@ -474,7 +478,7 @@ func (r *Repository) CompleteWalletOperation(op model.WalletOperation, state str
 			return nil
 		}
 		reference := "wallet:" + op.ID
-		return tx.Create(&model.CreditLedgerEntry{ID: newRepositoryID(), UserID: order.UserID, Type: entryType, AmountMicrocredits: amount, AvailableAfterMicrocredits: balance * walletScale, BillingOrderID: order.ID, Model: order.Model, Scene: order.Scene, ReferenceKey: &reference, Note: "共享积分"}).Error
+		return tx.Create(&model.CreditLedgerEntry{ID: newRepositoryID(), UserID: order.UserID, Type: entryType, AmountMicrocredits: amount, AvailableAfterMicrocredits: balance * walletScale, BillingOrderID: order.ID, Model: order.Model, Scene: order.Scene, ReferenceKey: &reference, Note: joinLedgerNotes("共享积分", referenceVideoLedgerNote(order))}).Error
 	})
 }
 

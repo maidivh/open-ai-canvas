@@ -383,6 +383,16 @@ func TestSharedWalletRejectedSettlementStaysErrorOnReplay(t *testing.T) {
 
 func TestSharedWalletModeSwitchAndRewards(t *testing.T) {
 	s, db, _, user := newSharedWalletTest(t)
+	policy := defaultCreditPolicy()
+	policy.SignupBonusMicrocredits = CreditScale
+	policy.CheckinBonusMicrocredits = CreditScale
+	raw, err := json.Marshal(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.SystemSetting{Key: creditPolicySettingKey, ValueJSON: string(raw)}).Error; err != nil {
+		t.Fatal(err)
+	}
 	if err := s.ensureSignupBonus(user.ID); err != nil {
 		t.Fatal("external signup blocked login", err)
 	}
@@ -627,7 +637,8 @@ func TestSharedWalletAppliesFrozenLimitAfterProtocolMapping(t *testing.T) {
 	}))
 	defer server.Close()
 	input := canvasGenerationInput{Mode: "text", Config: providerConfig{BaseURL: server.URL, InterfaceType: "chat-completion"}, MaxOutputTokens: 200, EnforceWalletOutputLimit: true}
-	_, _, err := executeProtocolCreateRequest(context.Background(), input, protocol.RequestSpec{Method: "POST", Path: "/test", ContentType: "application/json", Body: map[string]any{"max_tokens": 9999, "max_output_tokens": 9999, "max_completion_tokens": 9999}})
+	ctx := withProtocolRegistry(context.Background(), loadOfficialFallbackRegistry())
+	_, _, err := executeProtocolCreateRequest(ctx, input, protocol.RequestSpec{Method: "POST", Path: "/test", ContentType: "application/json", Body: map[string]any{"max_tokens": 9999, "max_output_tokens": 9999, "max_completion_tokens": 9999}})
 	if err != nil {
 		t.Fatal(err)
 	}
