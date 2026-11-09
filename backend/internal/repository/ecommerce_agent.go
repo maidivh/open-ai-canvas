@@ -76,6 +76,9 @@ func (r *Repository) CreateEcommerceAgentRun(run *model.EcommerceAgentRun, proje
 
 func (r *Repository) SaveEcommerceAgentPage(userID string, page *model.EcommerceAgentPage) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.EcommerceAgentRun{}).Where("user_id = ? AND id = ?", userID, page.RunID).UpdateColumn("updated_at", gorm.Expr("updated_at")).Error; err != nil {
+			return err
+		}
 		var run model.EcommerceAgentRun
 		if err := tx.Where("user_id = ? AND id = ?", userID, page.RunID).First(&run).Error; err != nil {
 			return err
@@ -116,7 +119,14 @@ func (r *Repository) SaveEcommerceAgentResult(userID, runID, briefJSON, copyJSON
 // Only persisted successful pages count toward the charge.
 func (r *Repository) FinishEcommerceAgentRun(userID, runID, status, errorCode string) (*model.EcommerceAgentRun, error) {
 	var finished model.EcommerceAgentRun
+	if status != "completed" && status != "failed" && status != "cancelled" {
+		return nil, ErrTaskStateConflict
+	}
 	err := r.db.Transaction(func(tx *gorm.DB) error {
+		// Serialize page persistence, cancellation and completion before counting.
+		if err := tx.Model(&model.EcommerceAgentRun{}).Where("user_id = ? AND id = ?", userID, runID).UpdateColumn("updated_at", gorm.Expr("updated_at")).Error; err != nil {
+			return err
+		}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id = ? AND id = ?", userID, runID).First(&finished).Error; err != nil {
 			return err
 		}
@@ -131,6 +141,23 @@ func (r *Repository) FinishEcommerceAgentRun(userID, runID, status, errorCode st
 			return errors.New("ecommerce page count exceeds reservation")
 		}
 		if finished.BillingOrderID != "" {
+			var order model.BillingOrder
+			if err := tx.First(&order, "id = ? AND user_id = ? AND task_id = ? AND scene = ?", finished.BillingOrderID, userID, runID, "ecommerce_agent").Error; err != nil {
+				return err
+			}
+			if order.WalletMode == "external" {
+				now := time.Now()
+				finished.Status, finished.ErrorCode, finished.SuccessPages, finished.FinishedAt = status, errorCode, int(successes), &now
+				if err := tx.Model(&finished).Updates(map[string]any{"status": status, "error_code": errorCode, "success_pages": successes, "finished_at": now, "updated_at": now}).Error; err != nil {
+					return err
+				}
+				action := "settle"
+				if successes == 0 {
+					action = "refund"
+				}
+				_, err := New(tx).QueueWalletOperation(order.ID, action, nil)
+				return err
+			}
 			if successes == 0 {
 				if err := (&Repository{db: tx}).RefundBillingOrder(finished.BillingOrderID, status); err != nil {
 					return err

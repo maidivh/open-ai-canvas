@@ -58,7 +58,7 @@ func executeProtocolCreateRequest(ctx context.Context, input canvasGenerationInp
 	if body == nil {
 		return nil, nil, errors.New("声明式文本请求体必须是 JSON 对象")
 	}
-	if err := enforceWalletTextBody(body, input, wire); err != nil {
+	if err := applyWalletTextOutputLimit(body, input, wire); err != nil {
 		return nil, nil, err
 	}
 	applyTextThinking(body, input, wire)
@@ -173,6 +173,9 @@ func runClaudeTextTask(ctx context.Context, input canvasGenerationInput) (map[st
 	}
 	body := map[string]interface{}{"model": input.Config.Model, "max_tokens": maxTokens, "messages": messages}
 	applyTextThinking(body, input, "claude-api")
+	if err := enforceWalletTextBody(body, input, protocol.TextWireClaude); err != nil {
+		return nil, err
+	}
 	if systemPrompt := strings.TrimSpace(input.Config.SystemPrompt); systemPrompt != "" {
 		body["system"] = systemPrompt
 	}

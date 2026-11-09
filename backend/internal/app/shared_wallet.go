@@ -19,6 +19,7 @@ import (
 
 	"yingce/backend/internal/model"
 	"yingce/backend/internal/outbound"
+	"yingce/backend/internal/protocol"
 	"yingce/backend/internal/repository"
 )
 
@@ -148,7 +149,7 @@ func walletMultipleOutputs(body map[string]any) bool {
 	return false
 }
 
-func enforceWalletTextBody(body map[string]any, input canvasGenerationInput, wire string) error {
+func applyWalletTextOutputLimit(body map[string]any, input canvasGenerationInput, wire string) error {
 	if !input.EnforceWalletOutputLimit {
 		return nil
 	}
@@ -159,6 +160,33 @@ func enforceWalletTextBody(body map[string]any, input canvasGenerationInput, wir
 		delete(body, key)
 	}
 	applyAgentOutputLimit(body, agentStepOutputLimit(input), wire)
+	return nil
+}
+
+func enforceWalletTextBody(body map[string]any, input canvasGenerationInput, wire string) error {
+	if err := applyWalletTextOutputLimit(body, input, wire); err != nil {
+		return err
+	}
+	if !input.EnforceWalletOutputLimit {
+		return nil
+	}
+	if wire == protocol.TextWireClaude {
+		thinking, _ := body["thinking"].(map[string]any)
+		if thinking["type"] == "enabled" {
+			limit := intFromAny(body["max_tokens"])
+			if limit <= thinkingBudgetFloor {
+				return errors.New("共享钱包冻结的输出上限不足以容纳 Claude 最低思考预算，请提高输出上限或关闭思考")
+			}
+			// 自定义档位预算不能重新扩大钱包授权；Claude 要求预算严格小于总输出上限。
+			budget := intFromAny(thinking["budget_tokens"])
+			if budget < thinkingBudgetFloor {
+				return errors.New("Claude 思考预算低于最低要求")
+			}
+			if budget >= limit {
+				thinking["budget_tokens"] = limit - 1
+			}
+		}
+	}
 	return nil
 }
 func (s *Service) AdminWalletSettings(actor *model.User) (*WalletSettingsView, error) {

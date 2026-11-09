@@ -273,7 +273,24 @@ func (r *Repository) FailWalletOperation(id, reason string) error {
 
 func (r *Repository) QueueWalletOperation(id, action string, duration *int64) (*model.WalletOperation, error) {
 	var result model.WalletOperation
+	var admission *model.BillingOrder
+	if action == "reserve" {
+		var err error
+		admission, err = r.BillingOrder(id)
+		if err != nil {
+			return nil, err
+		}
+	}
 	err := r.db.Transaction(func(tx *gorm.DB) error {
+		if admission != nil && admission.Scene == "ecommerce_agent" {
+			subject, err := lockWalletBillingTask(tx, admission)
+			if err != nil {
+				return err
+			}
+			if !walletBillingTaskCanRun(subject, *admission) {
+				return ErrBillingStateConflict
+			}
+		}
 		// This no-op write serializes terminal operation intentions for one order.
 		if err := tx.Model(&model.BillingOrder{}).Where("id = ?", id).UpdateColumn("updated_at", time.Now()).Error; err != nil {
 			return err
@@ -322,7 +339,13 @@ func (r *Repository) QueueWalletOperation(id, action string, duration *int64) (*
 		point := int64(0)
 		if action == "settle" || action == "restore" {
 			actual := order.AmountMicrocredits
-			if order.BillingMode == "token" && !zeroPricedTokenOrder(order) {
+			if order.Scene == "ecommerce_agent" {
+				var err error
+				actual, err = ecommerceWalletSettlementAmount(tx, &order)
+				if err != nil {
+					return err
+				}
+			} else if order.BillingMode == "token" && !zeroPricedTokenOrder(order) {
 				usage, source, err := tokenSettlementUsage(tx, order)
 				if err != nil {
 					return err
@@ -403,7 +426,7 @@ func (r *Repository) CompleteWalletOperation(op model.WalletOperation, state str
 		return err
 	}
 	return r.db.Transaction(func(tx *gorm.DB) error {
-		var task *model.Task
+		var task *walletBillingSubject
 		if op.Action == "reserve" {
 			var err error
 			task, err = lockWalletBillingTask(tx, snapshot)
@@ -526,7 +549,16 @@ func (r *Repository) MarkExternalWalletRunning(id string) error {
 // matching task cancellation/route updates and avoiding a read/check/write gap.
 // The first statement is a write so SQLite can acquire its writer lock before
 // reading a snapshot; PostgreSQL holds the same row lock until the commit.
-func lockWalletBillingTask(tx *gorm.DB, order *model.BillingOrder) (*model.Task, error) {
+type walletBillingSubject struct {
+	UserID         string
+	BillingOrderID string
+	Running        bool
+}
+
+func lockWalletBillingTask(tx *gorm.DB, order *model.BillingOrder) (*walletBillingSubject, error) {
+	if order.Scene == "ecommerce_agent" {
+		return lockEcommerceWalletRun(tx, order)
+	}
 	if order.TaskID == "" {
 		return nil, nil
 	}
@@ -537,15 +569,15 @@ func lockWalletBillingTask(tx *gorm.DB, order *model.BillingOrder) (*model.Task,
 	var task model.Task
 	if err := tx.First(&task, "id = ?", order.TaskID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return &task, nil
+			return &walletBillingSubject{}, nil
 		}
 		return nil, err
 	}
-	return &task, nil
+	return &walletBillingSubject{UserID: task.UserID, BillingOrderID: task.BillingOrderID, Running: task.Status == model.TaskStatusRunning}, nil
 }
 
-func walletBillingTaskCanRun(task *model.Task, order model.BillingOrder) bool {
-	return task == nil || (task.UserID == order.UserID && task.BillingOrderID == order.ID && task.Status == model.TaskStatusRunning)
+func walletBillingTaskCanRun(task *walletBillingSubject, order model.BillingOrder) bool {
+	return task == nil || (task.UserID == order.UserID && task.BillingOrderID == order.ID && task.Running)
 }
 
 func (r *Repository) ExternalWalletLedger(userID, entryType string, limit, offset int) ([]model.CreditLedgerEntry, int64, error) {

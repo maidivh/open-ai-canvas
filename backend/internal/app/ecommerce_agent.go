@@ -272,7 +272,12 @@ func (s *Service) ecommerceAgentOrder(userID, runID, key string, req ecommerceag
 			modelKey = cfg.ImageModel
 		}
 		order := &model.BillingOrder{ID: newID(), UserID: userID, TaskID: runID, IdempotencyKey: "ecommerce:" + key, Model: modelKey, Capability: "image", Scene: "ecommerce_agent", BillingMode: "fixed_request", UnitPriceMicrocredits: unit, MultiplierBasisPoints: 10000, Quantity: int64(count), AmountMicrocredits: amount, ReservedAmountMicrocredits: amount, Status: model.BillingStatusReserved}
-		return order, unit, nil
+		wallet, err := s.repo.SharedWalletSettings()
+		if err != nil {
+			return nil, 0, err
+		}
+		order, err = prepareWalletQuote(order, wallet)
+		return order, unit, err
 	}
 	channel := req.Channel
 	if channel == "" {
@@ -499,7 +504,7 @@ func (s *Service) GenerateEcommerceAgent(ctx context.Context, userID string, req
 		return nil, err
 	}
 	if err = s.MarkBillingRunning(order.ID); err != nil {
-		_, _ = s.repo.FinishEcommerceAgentRun(userID, runID, "failed", "UPSTREAM_ERROR")
+		_, _ = s.finishEcommerceAgentRun(userID, runID, "failed", "UPSTREAM_ERROR")
 		return nil, err
 	}
 	workCtx, cancel := context.WithTimeout(ctx, cfg.GenerateTimeout)
@@ -532,7 +537,7 @@ func (s *Service) GenerateEcommerceAgent(ctx context.Context, userID string, req
 					status, code = "cancelled", "CANCELLED"
 				}
 			}
-			_, _ = s.repo.FinishEcommerceAgentRun(userID, runID, status, code)
+			_, _ = s.finishEcommerceAgentRun(userID, runID, status, code)
 		}
 	}()
 	if err = emit(ecommerceagent.Event{Event: "workflow_started", TaskID: runID, ConversationID: projectID, Data: map[string]any{"pageCount": len(pages), "charged": float64(order.AmountMicrocredits) / float64(CreditScale), "mode": cfg.Mode}}); err != nil {
@@ -670,15 +675,19 @@ func (s *Service) GenerateEcommerceAgent(ctx context.Context, userID string, req
 	if _, err = s.repo.SaveEcommerceAgentCanvas(userID, projectID, string(canvasJSON)); err != nil {
 		return nil, err
 	}
-	if run, err = s.repo.FinishEcommerceAgentRun(userID, runID, "completed", ""); err != nil {
+	if run, err = s.finishEcommerceAgentRun(userID, runID, "completed", ""); err != nil {
 		return nil, err
 	}
 	finished = true
+	order, err = s.repo.BillingOrder(run.BillingOrderID)
+	if err != nil {
+		return nil, err
+	}
 	view, err = s.EcommerceAgentTask(userID, runID)
 	if err != nil {
 		return nil, err
 	}
-	if err = emit(ecommerceagent.Event{Event: "node_finished", Data: map[string]any{"outputs": map[string]any{"answer": "出图完成", "files": pages}, "posterCanvas": canvas, "brief": analysis.Brief, "copy": copyResult, "pages": pages, "credit": map[string]any{"charged": float64(run.UnitMicrocredits*int64(run.SuccessPages)) / float64(CreditScale)}, "projectId": projectID}}); err != nil {
+	if err = emit(ecommerceagent.Event{Event: "node_finished", Data: map[string]any{"outputs": map[string]any{"answer": "出图完成", "files": pages}, "posterCanvas": canvas, "brief": analysis.Brief, "copy": copyResult, "pages": pages, "credit": map[string]any{"charged": float64(order.ActualAmountMicrocredits) / float64(CreditScale)}, "projectId": projectID}}); err != nil {
 		return view, err
 	}
 	err = emit(ecommerceagent.Event{Event: "message", Data: map[string]any{"done": true}})
@@ -706,7 +715,14 @@ func (s *Service) replayEcommerceAgent(userID string, run *model.EcommerceAgentR
 	if err != nil {
 		return nil, err
 	}
-	if err = emit(ecommerceagent.Event{Event: "workflow_started", TaskID: run.ID, ConversationID: run.ProjectID, Data: map[string]any{"pageCount": run.PageCount, "charged": float64(run.UnitMicrocredits*int64(run.PageCount)) / float64(CreditScale), "mode": run.Mode, "replayed": true}}); err != nil {
+	order, err := s.repo.BillingOrder(run.BillingOrderID)
+	if err != nil {
+		return nil, err
+	}
+	if order.UserID != userID || order.TaskID != run.ID || order.Scene != "ecommerce_agent" {
+		return nil, repository.ErrBillingStateConflict
+	}
+	if err = emit(ecommerceagent.Event{Event: "workflow_started", TaskID: run.ID, ConversationID: run.ProjectID, Data: map[string]any{"pageCount": run.PageCount, "charged": float64(order.AmountMicrocredits) / float64(CreditScale), "mode": run.Mode, "replayed": true}}); err != nil {
 		return nil, err
 	}
 	for _, page := range view.Pages {

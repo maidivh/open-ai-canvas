@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -118,7 +120,8 @@ func TestSharedWalletDeclarativeAgentThinkingCannotReopenOutputLimit(t *testing.
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Error(err)
 		}
-		if body["max_tokens"] != float64(512) {
+		thinking, _ := body["thinking"].(map[string]any)
+		if body["max_tokens"] != float64(4096) || thinking["budget_tokens"] != float64(4095) {
 			t.Errorf("non-streaming Agent reapplied thinking after wallet limit: %#v", body)
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -126,15 +129,128 @@ func TestSharedWalletDeclarativeAgentThinkingCannotReopenOutputLimit(t *testing.
 	}))
 	defer server.Close()
 	ctx := withProtocolRegistry(context.Background(), loadOfficialFallbackRegistry())
+	config := mustThinkingPreset(t, "claude-budget", protocol.TextWireClaude)
+	config.Intensity.Budgets = map[string]int{"medium": 8192}
 	_, err := runAgentToolTask(ctx, canvasGenerationInput{
-		Mode: "text", MaxOutputTokens: 512, EnforceWalletOutputLimit: true,
-		TextOptions: canvasTextOptions{ThinkingLevel: "medium"},
+		Mode: "text", MaxOutputTokens: 16384, EnforceWalletOutputLimit: true,
+		TextOptions: canvasTextOptions{ThinkingLevel: "medium", MaxOutputTokens: 4096},
 		Config: providerConfig{BaseURL: server.URL, InterfaceType: "claude-api", Model: "claude",
-			CapabilityConfig: &ModelCapabilityConfig{Text: &TextCapabilityConfig{Thinking: mustThinkingPreset(t, "claude-budget", protocol.TextWireClaude)}}},
+			CapabilityConfig: &ModelCapabilityConfig{Text: &TextCapabilityConfig{MaxOutputTokens: 16384, Thinking: config}}},
 		AgentRequests: &agentToolRequests{Claude: map[string]any{"messages": []any{}, "tools": []any{}}},
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSharedWalletClaudeThinkingFrozenLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name                      string
+		limit, budget, wantBudget int
+	}{
+		{name: "custom_budget", limit: 4096, budget: 8192, wantBudget: 4095},
+		{name: "equal_budget", limit: 4096, budget: 4096, wantBudget: 4095},
+		{name: "minimum_valid_limit", limit: 1025, budget: 8192, wantBudget: 1024},
+		{name: "budget_already_fits", limit: 4096, budget: 2048, wantBudget: 2048},
+		{name: "minimum_budget_leaves_no_output", limit: 1024, budget: 8192},
+		{name: "below_minimum_budget", limit: 512, budget: 8192},
+	} {
+		for _, path := range []string{"text", "agent", "legacy_text", "legacy_agent", "stream_text", "stream_agent"} {
+			t.Run(tc.name+"/"+path, func(t *testing.T) {
+				t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
+				var called atomic.Bool
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					called.Store(true)
+					var body map[string]any
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+						t.Error(err)
+					}
+					thinking, _ := body["thinking"].(map[string]any)
+					if body["max_tokens"] != float64(tc.limit) || thinking["budget_tokens"] != float64(tc.wantBudget) || thinking["type"] != "enabled" {
+						t.Errorf("invalid frozen Claude request: %#v", body)
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"done"}]}`))
+				}))
+				defer server.Close()
+				config := mustThinkingPreset(t, "claude-budget", protocol.TextWireClaude)
+				config.Intensity.Budgets = map[string]int{"medium": tc.budget}
+				config, err := normalizeTextThinkingConfig(config, protocol.TextWireClaude, 16384)
+				if err != nil {
+					t.Fatal(err)
+				}
+				input := canvasGenerationInput{
+					Mode: "text", MaxOutputTokens: tc.limit, EnforceWalletOutputLimit: true,
+					TextOptions: canvasTextOptions{ThinkingLevel: "medium"},
+					Config: providerConfig{BaseURL: server.URL, InterfaceType: "claude-api", Model: "claude",
+						CapabilityConfig: &ModelCapabilityConfig{Text: &TextCapabilityConfig{MaxOutputTokens: 16384, Thinking: config}}},
+				}
+				ctx := withProtocolRegistry(context.Background(), loadOfficialFallbackRegistry())
+				if strings.HasPrefix(path, "legacy_") {
+					ctx = withProtocolRegistry(context.Background(), emptyProtocolRegistry)
+				}
+				input.StreamText = strings.HasPrefix(path, "stream_")
+				if strings.HasSuffix(path, "agent") {
+					input.AgentRequests = &agentToolRequests{Claude: map[string]any{"messages": []any{}, "tools": []any{}}}
+					_, err = runAgentToolTask(ctx, input)
+				} else if path == "legacy_text" {
+					_, err = runTextTask(ctx, input)
+				} else {
+					_, _, err = executeProtocolCreateRequest(ctx, input, protocol.RequestSpec{
+						Method: "POST", Path: "/messages", ContentType: "application/json", Body: map[string]any{"max_tokens": 16384},
+					})
+				}
+				if tc.wantBudget == 0 {
+					if err == nil || !strings.Contains(err.Error(), "思考预算") || called.Load() {
+						t.Fatalf("incompatible request reached upstream: called=%v, err=%v", called.Load(), err)
+					}
+				} else if err != nil || !called.Load() {
+					t.Fatalf("valid request not sent: called=%v, err=%v", called.Load(), err)
+				}
+			})
+		}
+	}
+}
+
+func TestSharedWalletClaudeThinkingOverridesTemplate(t *testing.T) {
+	for _, tc := range []struct{ preset, level, want string }{
+		{"claude-budget", "off", "disabled"},
+		{"claude-adaptive", "medium", "adaptive"},
+	} {
+		t.Run(tc.want, func(t *testing.T) {
+			t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+				}
+				thinking, _ := body["thinking"].(map[string]any)
+				if body["max_tokens"] != float64(512) || thinking["type"] != tc.want || thinking["budget_tokens"] != nil {
+					t.Errorf("template thinking not overridden: %#v", body)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"done"}]}`))
+			}))
+			defer server.Close()
+			config := mustThinkingPreset(t, tc.preset, protocol.TextWireClaude)
+			if tc.level == ThinkingLevelOff {
+				config.Switch.Kind = ThinkingSwitchThinkingType
+			}
+			input := canvasGenerationInput{
+				Mode: "text", MaxOutputTokens: 512, EnforceWalletOutputLimit: true,
+				TextOptions: canvasTextOptions{ThinkingLevel: tc.level},
+				Config: providerConfig{BaseURL: server.URL, InterfaceType: "claude-api",
+					CapabilityConfig: &ModelCapabilityConfig{Text: &TextCapabilityConfig{Thinking: config}}},
+			}
+			ctx := withProtocolRegistry(context.Background(), loadOfficialFallbackRegistry())
+			_, _, err := executeProtocolCreateRequest(ctx, input, protocol.RequestSpec{
+				Method: "POST", Path: "/messages", ContentType: "application/json",
+				Body: map[string]any{"max_tokens": 16384, "thinking": map[string]any{"type": "enabled", "budget_tokens": 8192}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
