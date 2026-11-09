@@ -360,7 +360,7 @@ export default function CreditOperationsPanel({ users, activeOperation, onOperat
 
     const columns: ColumnsType<BillingOrder> = [
         { title: "创建时间", dataIndex: "createdAt", width: 170, align: "center", render: formatTime },
-        { title: "钱包来源", dataIndex: "walletMode", width: 105, render: (mode: BillingOrder["walletMode"]) => mode === "external" ? "小洞AI" : "内部积分" },
+        { title: "钱包来源", dataIndex: "walletMode", width: 105, render: (mode: BillingOrder["walletMode"]) => (mode === "external" ? "小洞AI" : "内部积分") },
         {
             title: "用户",
             dataIndex: "userId",
@@ -415,7 +415,12 @@ export default function CreditOperationsPanel({ users, activeOperation, onOperat
             dataIndex: "status",
             width: 110,
             align: "center",
-            render: (value: BillingOrder["status"], order) => <AdminStatusBadge label={order.walletMode === "external" && order.walletState === "pending" ? "待确认预扣" : order.walletMode === "external" && order.walletState === "rejected" ? "预扣未成功" : billingStatusLabels[value]} tone={value === "settled" ? "success" : value === "refunded" ? "neutral" : "warning"} />,
+            render: (value: BillingOrder["status"], order) => (
+                <AdminStatusBadge
+                    label={order.walletMode === "external" && order.walletState === "pending" ? "待确认预扣" : order.walletMode === "external" && order.walletState === "rejected" ? "预扣未成功" : billingStatusLabels[value]}
+                    tone={value === "settled" ? "success" : value === "refunded" ? "neutral" : "warning"}
+                />
+            ),
         },
         { title: "上游请求", dataIndex: "providerRequestId", width: 180, ellipsis: true, render: (value) => value || "未获取" },
         { title: "核对原因", dataIndex: "error", width: 260, ellipsis: true, render: (value) => value || "费用状态不明确" },
@@ -870,7 +875,9 @@ export default function CreditOperationsPanel({ users, activeOperation, onOperat
             >
                 {resolutionTarget ? (
                     <div className="admin-operation-confirmation">
-                        <p className="admin-operation-confirmation-copy">{resolutionTarget.action === "settle" ? "结算依据原订单钱包确认费用。内部 Token 订单可能补扣；外部订单只能在预扣额度内结算，差额退回小洞AI。" : "退回操作会按原订单钱包退回尚未结算的预授权积分。"}</p>
+                        <p className="admin-operation-confirmation-copy">
+                            {resolutionTarget.action === "settle" ? "结算依据原订单钱包确认费用。内部 Token 订单可能补扣；外部订单只能在预扣额度内结算，差额退回小洞AI。" : "退回操作会按原订单钱包退回尚未结算的预授权积分。"}
+                        </p>
                         <dl className="admin-operation-confirmation-grid">
                             <div>
                                 <dt>订单数量</dt>

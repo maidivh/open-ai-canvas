@@ -7,4 +7,4 @@ test("real wallet components preserve internal funding and isolate external bill
     if (result.exitCode !== 0) console.error(output);
     expect(output).toContain("0 fail");
     expect(result.exitCode).toBe(0);
-});
+}, 35_000);

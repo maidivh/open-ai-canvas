@@ -109,13 +109,23 @@ export function CreditOperationsPage() {
                     <Button icon={<Settings2 className="size-4" />} onClick={() => setActiveOperation("policy")}>
                         注册与签到赠送
                     </Button>
-                    <Button type="primary" disabled={settings.isFetching || settings.isError || settings.data?.mode !== "internal"} title={settings.data?.mode === "external" ? "外部积分请在小洞AI调整" : undefined} icon={<UserRoundCog className="size-4" />} onClick={() => setActiveOperation("adjustment")}>
+                    <Button
+                        type="primary"
+                        disabled={settings.isFetching || settings.isError || settings.data?.mode !== "internal"}
+                        title={settings.data?.mode === "external" ? "外部积分请在小洞AI调整" : undefined}
+                        icon={<UserRoundCog className="size-4" />}
+                        onClick={() => setActiveOperation("adjustment")}
+                    >
                         人工调账
                     </Button>
                 </>
             }
         >
-            {settings.isError ? <Alert type="error" showIcon title="无法确认扣费模式，人工调账暂不可用" action={<Button onClick={() => void settings.refetch()}>重试</Button>} /> : settings.data?.mode === "external" ? <Alert type="info" showIcon title="当前使用小洞AI积分" description="余额与充值在小洞AI管理。注册与签到赠分配置保留，仅内部模式生效。历史账单按原钱包结算和退款。" /> : null}
+            {settings.isError ? (
+                <Alert type="error" showIcon title="无法确认扣费模式，人工调账暂不可用" action={<Button onClick={() => void settings.refetch()}>重试</Button>} />
+            ) : settings.data?.mode === "external" ? (
+                <Alert type="info" showIcon title="当前使用小洞AI积分" description="余额与充值在小洞AI管理。注册与签到赠分配置保留，仅内部模式生效。历史账单按原钱包结算和退款。" />
+            ) : null}
             <CreditOperationsPanel users={references.users} activeOperation={activeOperation} onOperationChange={setActiveOperation} />
             <WalletSettingsDrawer open={walletSettingsOpen} onClose={() => setWalletSettingsOpen(false)} settings={settings.data} loading={settings.isFetching} error={settings.error} onReload={() => void settings.refetch()} onSaved={saved} />
         </AdminPageFrame>
