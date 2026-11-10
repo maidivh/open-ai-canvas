@@ -65,16 +65,16 @@ func (s *Service) prepareArkPrivateAssetReferences(ctx context.Context, userID s
 	if err != nil {
 		return err
 	}
+	// 素材 ID 按供应商隔离：渠道明确属于其他供应商时不再上传到当前素材库，
+	// 本地参考图保留公网 URL；已带 asset:// 的引用来源无法归属，按设计原样透传，由上游判定。
+	if provider := arkAssetProviderFromBaseURL(input.Config.BaseURL); provider != "" && provider != setting.Site {
+		return nil
+	}
 	automaticSyncEnabled, err := arkPrivateAssetAutomaticSyncEnabled(setting)
 	if err != nil {
 		return err
 	}
 	if !automaticSyncEnabled {
-		return nil
-	}
-	// 素材 ID 按供应商隔离：渠道明确属于其他供应商时不再上传到当前素材库，
-	// 保留公网参考 URL，避免把另一家的 asset:// 发给上游。
-	if provider := arkAssetProviderFromBaseURL(input.Config.BaseURL); provider != "" && provider != setting.Site {
 		return nil
 	}
 	if taskID := taskExecutionID(ctx); taskID != "" {
