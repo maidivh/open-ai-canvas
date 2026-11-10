@@ -10,9 +10,9 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 - 已实现：方舟素材库设置新增 `videoclaw` 站点，素材接口固定 `https://api.wantrace.com/api/v1/private/sd2/assets`（`open.feeling.ltd` 是厂商控制台，不作为接口域名），Region 固定 `cn-beijing`，ProjectName 默认 `default`；AK/SK 需在厂商控制台「凭证管理 → AK/SK 凭证」单独签发，不复用 Bearer API Key。
 - 已实现：可信素材绑定增加 `site` 维度（Schema 94），同一资源可分别缓存不同供应商的素材 ID，切换站点后不复用上一家的 `asset://`。
 - 已实现：视频渠道 Base URL 识别供应商；与素材站点不一致时跳过自动同步并保留公网参考 URL；无法识别的自定义代理保持原行为。
-- [ ] 管理员签发 AK/SK 后在后台选 Video Claw 保存，确认控制面提示、Region/ProjectName 只读和凭据校验。
-- [ ] 上传一张参考图并用 Seedance 2.0/2.5 生成，抓上游请求确认参考图为 `asset://`；切换同供应商另一模型复用同一 ID。
-- [ ] 切到官方方舟渠道生成，确认参考图回退为公网 URL，不出现另一家的 `asset://`。
+- [x] 管理员签发 AK/SK 后在后台选橙幻保存，确认控制面提示、Region/ProjectName 只读和凭据校验。已验证：保存成功，接口域名 `api.wantrace.com`。
+- [x] 上传一张参考图并用 Seedance 2.0/2.5 生成，抓上游请求确认参考图为 `asset://`；切换同供应商另一模型复用同一 ID。已验证：02:30 的橙幻任务两张参考图均为 `asset://asset-...`，上游 200；绑定表两条 `site=videoclaw` 记录均为 active。
+- [x] 切到官方方舟渠道生成，确认参考图回退为公网 URL，不出现另一家的 `asset://`。已验证：02:44 的火山引擎任务保留 TOS 公网 URL。
 - [ ] 真人认证未在一期开放，`realEnabled` 保持关闭；二期需真实手机完成 H5 回调验证。
 
 ## 合并复审：电商外部钱包与 Claude 思考预算
