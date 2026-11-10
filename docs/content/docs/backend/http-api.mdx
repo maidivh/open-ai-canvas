@@ -644,7 +644,9 @@ Skills 的 `tool_completed` / `tool_failed` 事件附带 `skillId`、`skillName`
 
 所有素材组都建在平台配置的方舟账号下，分三类：`real` 真人人像（本人 H5 活体认证生成）、`virtual` 虚拟人像（直接建组）、`ip` 版权 IP（只能由管理员创建并授权）。`scope=user` 为用户自建、只属于本人；`scope=platform` 为管理员创建，按授权（全部用户或指定用户）只读使用。
 
-管理员配置 `GET/PATCH /api/admin/settings/ark-private-assets`：`site`（`volcengine` / `byteplus`，决定控制面 `ark.<region>.volcengineapi.com` 或 `ark.<region>.byteplusapi.com`）、`enabled`（可信素材自动同步，与素材组相互独立）、`realEnabled` / `virtualEnabled`（开放用户自建真人 / 虚拟素材组）、`realGroupLimit` / `virtualGroupLimit`（每人上限 1–200，真人包含认证中的会话）、`billingEnabled` 与 `realGroupPriceMicrocredits` / `virtualGroupPriceMicrocredits`（按组一次性收费，0–10¹² 微积分）、`realReviewRequired` / `virtualReviewRequired`（用户上传先经平台审核）、`realAuthorizationDays`（真人授权有效期 1–3650 天，从认证完成起算）和 `callbackBaseUrl`（站点公网根地址，空时使用 `CANVAS_PUBLIC_BASE_URL`）。上限与天数传 0 表示保持原值。保存写入管理员审计 `ark_private_assets.update`。更换站点、Region、ProjectName 或 AccessKey 会使已有素材组标记为不可用（`available=false`）。
+管理员配置 `GET/PATCH /api/admin/settings/ark-private-assets`：`site`（`volcengine` / `byteplus` / `videoclaw`）、`enabled`（可信素材自动同步，与素材组相互独立）、`realEnabled` / `virtualEnabled`（开放用户自建真人 / 虚拟素材组）、`realGroupLimit` / `virtualGroupLimit`（每人上限 1–200，真人包含认证中的会话）、`billingEnabled` 与 `realGroupPriceMicrocredits` / `virtualGroupPriceMicrocredits`（按组一次性收费，0–10¹² 微积分）、`realReviewRequired` / `virtualReviewRequired`（用户上传先经平台审核）、`realAuthorizationDays`（真人授权有效期 1–3650 天，从认证完成起算）和 `callbackBaseUrl`（站点公网根地址，空时使用 `CANVAS_PUBLIC_BASE_URL`）。上限与天数传 0 表示保持原值。保存写入管理员审计 `ark_private_assets.update`。更换站点、Region、ProjectName 或 AccessKey 会使已有素材组标记为不可用（`available=false`）。
+
+`volcengine` / `byteplus` 的控制面分别为 `ark.<region>.volcengineapi.com` / `ark.<region>.byteplusapi.com`，Region 由管理员填写。`videoclaw` 走 `https://open.feeling.ltd/api/v1/private/sd2/assets`，Region 固定 `cn-beijing`，ProjectName 默认 `default`，AK/SK 需在厂商控制台「凭证管理 → AK/SK 凭证」单独签发（不复用 Bearer API Key）。可信素材绑定按站点隔离；视频渠道 Base URL 明确属于其他供应商时，自动同步跳过并保留公网参考 URL，避免把错误的 `asset://` 发给上游。无法识别的自定义代理保持原有行为。
 
 收费走 `billing_orders`（场景 `ark_asset_group`）：真人在发起认证时冻结、认证成功后扣除，失败、过期或取消退回；虚拟在 `CreateAssetGroup` 成功后扣除，失败退回。平台积分功能关闭或平台素材组不收费，删除素材组不退款。后台 worker 每 30 秒结束过期会话、退回滞留冻结并刷新方舟审核中的素材。
 

@@ -60,7 +60,15 @@ type ArkPrivateAssetPayload = Pick<
     | "accessKeySecret"
 >;
 
-// 站点决定控制面域名与推理 Base URL；Region 由管理员按开通情况手动填写。
+const VIDEO_CLAW_REGION = "cn-beijing";
+const VIDEO_CLAW_PROJECT = "default";
+const ARK_SITE_VALUES: ArkSite[] = ["volcengine", "byteplus", "videoclaw"];
+
+function normalizeArkSite(value: unknown): ArkSite {
+    return value === "byteplus" || value === "videoclaw" ? value : "volcengine";
+}
+
+// 站点决定控制面域名与推理 Base URL；火山 / BytePlus 的 Region 由管理员填写，Video Claw 固定 cn-beijing。
 const ARK_SITE_META: Record<ArkSite, { label: string; regionPlaceholder: string; controlPlane: (region: string) => string; inference: string }> = {
     volcengine: {
         label: "火山引擎（中国站）",
@@ -73,6 +81,12 @@ const ARK_SITE_META: Record<ArkSite, { label: string; regionPlaceholder: string;
         regionPlaceholder: "ap-southeast-1",
         controlPlane: (region) => `https://ark.${region || "<region>"}.byteplusapi.com`,
         inference: "https://ark.ap-southeast.bytepluses.com/api/v3",
+    },
+    videoclaw: {
+        label: "Video Claw（open.feeling.ltd）",
+        regionPlaceholder: VIDEO_CLAW_REGION,
+        controlPlane: () => "https://open.feeling.ltd/api/v1/private/sd2/assets",
+        inference: "https://open.feeling.ltd/api/v3",
     },
 };
 
@@ -125,7 +139,7 @@ function ArkPrivateAssetsSettingsForm() {
     const draftRealEnabled = watchedValues?.realEnabled === true;
     const draftVirtualEnabled = watchedValues?.virtualEnabled === true;
     const draftBillingEnabled = watchedValues?.billingEnabled === true;
-    const draftSite: ArkSite = watchedValues?.site === "byteplus" ? "byteplus" : "volcengine";
+    const draftSite: ArkSite = normalizeArkSite(watchedValues?.site);
     const siteMeta = ARK_SITE_META[draftSite];
 
     const load = useCallback(
@@ -374,13 +388,19 @@ function ArkPrivateAssetsSettingsForm() {
                     >
                         <div className="admin-ark-form-grid">
                             <Form.Item name="site" label="方舟站点" extra={`推理渠道 Base URL 参考：${siteMeta.inference}`}>
-                                <Select options={(Object.keys(ARK_SITE_META) as ArkSite[]).map((value) => ({ value, label: ARK_SITE_META[value].label }))} aria-label="方舟站点" />
+                                <Select
+                                    options={ARK_SITE_VALUES.map((value) => ({ value, label: ARK_SITE_META[value].label }))}
+                                    aria-label="方舟站点"
+                                    onChange={(value: ArkSite) => {
+                                        if (value === "videoclaw") form.setFieldsValue({ region: VIDEO_CLAW_REGION, projectName: VIDEO_CLAW_PROJECT });
+                                    }}
+                                />
                             </Form.Item>
-                            <Form.Item name="region" label="Region" extra={`控制面地址：${siteMeta.controlPlane(normalizedDraft.region)}。请填写已开通素材库的区域。`}>
-                                <Input autoComplete="off" placeholder={siteMeta.regionPlaceholder} />
+                            <Form.Item name="region" label="Region" extra={draftSite === "videoclaw" ? "Video Claw 固定使用 cn-beijing，无需修改。" : `控制面地址：${siteMeta.controlPlane(normalizedDraft.region)}。请填写已开通素材库的区域。`}>
+                                <Input autoComplete="off" placeholder={siteMeta.regionPlaceholder} disabled={draftSite === "videoclaw"} />
                             </Form.Item>
-                            <Form.Item name="projectName" label="Ark ProjectName">
-                                <Input autoComplete="off" placeholder="方舟项目名称" />
+                            <Form.Item name="projectName" label="Ark ProjectName" extra={draftSite === "videoclaw" ? "Video Claw 固定使用 default，与视频生成请求保持一致。" : undefined}>
+                                <Input autoComplete="off" placeholder={draftSite === "videoclaw" ? VIDEO_CLAW_PROJECT : "方舟项目名称"} disabled={draftSite === "videoclaw"} />
                             </Form.Item>
                             <Form.Item name="accessKeyId" label="IAM AccessKey">
                                 <Input autoComplete="off" prefix={<KeyRound className="size-4 text-foreground/35" />} placeholder="仅保存在服务端" />
@@ -535,10 +555,10 @@ function toFormValues(setting: AdminArkPrivateAssetSetting): ArkPrivateAssetForm
         realReviewRequired: setting.realReviewRequired,
         virtualReviewRequired: setting.virtualReviewRequired,
         realAuthorizationDays: setting.realAuthorizationDays,
-        site: setting.site === "byteplus" ? "byteplus" : "volcengine",
+        site: normalizeArkSite(setting.site),
         callbackBaseUrl: setting.callbackBaseUrl || "",
-        region: setting.region || "",
-        projectName: setting.projectName || "",
+        region: setting.site === "videoclaw" ? VIDEO_CLAW_REGION : setting.region || "",
+        projectName: setting.site === "videoclaw" ? setting.projectName || VIDEO_CLAW_PROJECT : setting.projectName || "",
         accessKeyId: setting.accessKeyId || "",
         accessKeySecret: "",
     };
@@ -550,6 +570,7 @@ function wholeNumber(value: unknown, fallback: number) {
 }
 
 function normalizeArkPrivateAssetPayload(values: Partial<ArkPrivateAssetForm>): ArkPrivateAssetPayload {
+    const site = normalizeArkSite(values.site);
     return {
         enabled: Boolean(values.enabled),
         realEnabled: Boolean(values.realEnabled),
@@ -562,10 +583,10 @@ function normalizeArkPrivateAssetPayload(values: Partial<ArkPrivateAssetForm>): 
         realReviewRequired: Boolean(values.realReviewRequired),
         virtualReviewRequired: Boolean(values.virtualReviewRequired),
         realAuthorizationDays: wholeNumber(values.realAuthorizationDays, 0),
-        site: values.site === "byteplus" ? "byteplus" : "volcengine",
+        site,
         callbackBaseUrl: values.callbackBaseUrl?.trim().replace(/\/+$/, "") || "",
-        region: values.region?.trim().toLowerCase() || "",
-        projectName: values.projectName?.trim() || "",
+        region: site === "videoclaw" ? VIDEO_CLAW_REGION : values.region?.trim().toLowerCase() || "",
+        projectName: site === "videoclaw" ? values.projectName?.trim() || VIDEO_CLAW_PROJECT : values.projectName?.trim() || "",
         accessKeyId: values.accessKeyId?.trim() || "",
         accessKeySecret: values.accessKeySecret?.trim() || "",
     };

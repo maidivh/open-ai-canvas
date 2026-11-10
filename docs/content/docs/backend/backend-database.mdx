@@ -11,7 +11,7 @@ description: 影策后端核心持久化表与状态边界
 
 `system_settings.shared_wallet` 保存全局模式与配置。准入与切换共用数据库写锁；存在排队/执行任务、未结清账单、待确认操作或未结束充值时禁止切换。业务事务只写意图，远程 HTTP 在事务外执行。运行 worker 前确认预扣，失败/超时通过原操作 ID 对账；账单保存的原来源用于结算、退款及恢复。详见 [共享钱包](./shared-wallet)。
 
-当前结构版本为 93。新库沿用 main 的迁移编号，在版本 93 添加共享钱包；已有分支根据历史安排缺少的迁移，保留既有版本、名称、校验和与应用时间：
+当前结构版本为 94。新库沿用 main 的迁移编号，在版本 93 添加共享钱包；已有分支根据历史安排缺少的迁移，保留既有版本、名称、校验和与应用时间：
 
 | 已有历史 | 版本 58 | 版本 61 | 版本 73 | 版本 78 | 版本 79 | 版本 93 |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -23,6 +23,8 @@ description: 影策后端核心持久化表与状态边界
 | medivh_dev：58 钱包（已到 73 或尚未合并） | 共享钱包 | 记忆提案 | 短剧制作 | 单集素材类型 | 角色声音与造型 | 电商 Agent |
 
 短剧制作迁移编号为 73 时，执行计划将它放在版本 61 之后、依赖短剧表的版本 62 之前；不能直接按版本排序执行。版本 59–60、62–72、74–77、80–92 的名称与校验和保持 main 原样；已发布记录不改写，版本 93 补齐缺少的迁移，各路径最终结构一致。本页电商 Schema 79 是 main 编号，已有共享钱包分支的电商迁移为 93。状态检查与启动校验采用同一计划；未知名称、校验和不匹配或冲突记录仍拒绝升级。升级前备份，运行 `migrate-schema up` 与 `verify` 后再启动新后端；回退须恢复匹配的数据库备份和程序版本，不手工改迁移表。
+
+版本 94 `ark_asset_provider` 给 `ark_private_asset_bindings` 增加 `site`（默认 `volcengine`），旧记录回填火山引擎，唯一键从 `(resource_id, project_name)` 扩为 `(resource_id, project_name, site)`。同一本地资源可以在不同素材供应商下分别缓存方舟素材 ID，切换站点后不会复用上一家的 `asset://`。
 
 ## 邮件发送记录与消费日报订阅（Schema 91）
 
@@ -78,6 +80,8 @@ description: 影策后端核心持久化表与状态边界
 | `ark_portrait_group_grants`（新表） | `group_id`、`user_id`、`created_at`，`(group_id, user_id)` 唯一 | 平台素材组授权给指定用户；`grant_all` 时不写行 |
 
 迁移把设置项 `portraitEnabled` 改名为 `realEnabled`；旧版「加入素材库」写入的真人图片（`metadata.source=ark-portrait` 且带 `arkAssetId`）转为 `ark` 分类并写入 `arkCertification`，同时删除已废弃的手动 `portraitCertified` 标记。旧素材组均视为用户自建的真人组，旧素材不进入审核。素材业务分类新增 `ark`「方舟认证」，只由服务端写入。收费订单使用 `billing_orders`，场景 `ark_asset_group`，幂等键 `ark-group:session:<id>`（真人）或 `ark-group:group:<id>`（虚拟）。
+
+可信素材绑定 `ark_private_asset_bindings` 在版本 94 增加 `site`（`volcengine` / `byteplus` / `videoclaw`，默认 `volcengine`），唯一键为 `(resource_id, project_name, site)`。同一本地资源在不同素材供应商下分别缓存素材 ID；删除或切换站点不会删除历史绑定。
 
 ## 站点姿势库（Schema 85）
 

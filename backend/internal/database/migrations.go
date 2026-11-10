@@ -14,7 +14,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 93
+const CurrentSchemaVersion int64 = 94
 
 const baselineSchemaChecksum = "sha256:open-ai-canvas-schema-v1-20260830"
 const schemaMigrationAppliedAtIndexChecksum = "sha256:schema-migrations-applied-at-index-v2-20260830"
@@ -330,6 +330,31 @@ var schemaMigrations = []migration{
 		return nil
 	}},
 	{version: 93, name: "shared_wallet_billing", checksum: "sha256:shared-wallet-billing-v58-20261019", apply: func(tx *gorm.DB) error { return tx.AutoMigrate(&model.BillingOrder{}, &model.WalletOperation{}) }},
+	{version: 94, name: "ark_asset_provider", checksum: "sha256:ark-asset-provider-v94-20261110", apply: migrateArkAssetProvider},
+}
+
+// migrateArkAssetProvider 给可信素材绑定增加供应商维度。素材 ID 按供应商隔离，
+// 切换素材站点后不能复用上一家的 asset://。旧记录按火山引擎回填。
+func migrateArkAssetProvider(tx *gorm.DB) error {
+	entity := &model.ArkPrivateAssetBinding{}
+	if !tx.Migrator().HasTable(entity) {
+		return nil
+	}
+	if !tx.Migrator().HasColumn(entity, "Site") {
+		if err := tx.Migrator().AddColumn(entity, "Site"); err != nil {
+			return fmt.Errorf("增加素材绑定站点列：%w", err)
+		}
+	}
+	if err := tx.Exec("UPDATE ark_private_asset_bindings SET site = 'volcengine' WHERE site IS NULL OR site = ''").Error; err != nil {
+		return fmt.Errorf("回填素材绑定站点：%w", err)
+	}
+	if err := tx.Exec("DROP INDEX IF EXISTS idx_ark_private_asset_binding_resource_project").Error; err != nil {
+		return fmt.Errorf("删除旧素材绑定索引：%w", err)
+	}
+	if err := tx.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_ark_private_asset_binding_resource_project ON ark_private_asset_bindings (resource_id, project_name, site)").Error; err != nil {
+		return fmt.Errorf("重建素材绑定索引：%w", err)
+	}
+	return nil
 }
 
 // migrateReferenceVideoCostPrice 为价格档成本和账单成本快照增加带参考视频的成本价。

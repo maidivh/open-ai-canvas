@@ -1,0 +1,188 @@
+---
+title: Video Claw 素材库接入方案（一期）
+description: 在现有方舟素材库实现上增加 videoclaw 站点，复用素材组/素材/计费/UI，一期只做普通素材库
+---
+
+# Video Claw 素材库接入方案（一期）
+
+> 状态：设计已确认，未实施。
+>
+> 一期只做普通素材库（AIGC 素材组、图片上传、`asset://` 引用），真人认证留二期。原因是厂商控制台没有真人认证入口，且当前账号尚未签发 AK/SK；普通素材库已经能覆盖 Seedance 参考图的主要场景。
+
+## 1. 背景
+
+`open.feeling.ltd`（Video Claw 国内版）把火山方舟 Seedance 2.0 的「原厂素材库 + 真人认证」重新封装为一套 AK/SK 接口：
+
+- `POST /api/v1/private/sd2/assets?Action=<动作>&Version=2024-01-01`
+- 签名使用火山兼容的 HMAC-SHA256，scope 固定 `<date>/cn-beijing/ark/request`
+- 素材组、素材、真人认证共 12 个 Action，响应结构与方舟 `ResponseMetadata + Result` 一致
+- 视频接口接受 `asset://asset-...` 引用，`ProjectName` 必须与素材创建时一致
+
+控制台现状（账号 `yundong`）：
+
+- `凭证管理` 分 `API 密钥`（Bearer，已有 3 个）和 `AK/SK 凭证`（**暂无**）。页面明确说明 AK/SK 不复用 Bearer Key。
+- `模型中心` 有 85 个模型，包含 Doubao Seedance 2.5 / 2.0 / 2.0 Fast / 2.0 Mini。
+- `SD2素材库` 提供文件夹、图片/视频/音频上传、素材列表与详情，当前 0 个素材。
+- 没有真人认证入口；真人认证只能由 API 发起 H5 会话。
+
+## 2. 目标与非目标
+
+目标：
+
+1. 管理员只配置两项：站点选 `Video Claw`、粘贴 AK/SK。Region、ProjectName、控制面地址自动。
+2. 客户在同一供应商的 Seedance 模型之间切换时无感，`asset://` ID 通用。
+3. 复用现有素材组、素材、审核、计费、素材库 UI，不改业务流程。
+4. 官方方舟渠道继续可用；素材供应商不匹配时自动降级为公网 URL，不静默失败。
+
+非目标（一期不做）：
+
+- 真人认证回调分支、H5Link 适配（二期，`realEnabled` 保持关闭）
+- 视频/音频素材上传（现有代码只允许图片，保持）
+- `ListAssets` 批量刷新、`UpdateAsset`、`Idempotency-Key`（后续优化）
+- 旧素材跨供应商迁移、双活
+
+## 3. 现状
+
+相关实现：
+
+- `backend/internal/app/provider_ark_private_assets.go`：可信素材自动同步、控制面调用与签名、binding 复用
+- `backend/internal/app/ark_portraits.go`：真人/虚拟素材组、会话、回调
+- `backend/internal/app/settings_ark_assets.go`：站点、Region、ProjectName、AK/SK、计费与审核设置
+- `backend/internal/model/models_platform.go`：`ArkPrivateAssetBinding`、`ArkPortraitSession`、`ArkPortraitGroup`、`ArkPortraitAsset`
+- `backend/internal/database/migrations.go`：版本化迁移，当前 v93
+- `web/src/pages/admin/settings/ark-private-assets-settings-page.tsx`：管理员设置页
+- `web/src/services/api/generation-task.ts`：前端 `asset://` 选择
+- `web/src/services/api/video-provider-seedance.ts`：Seedance 协议 payload
+
+关键约束：
+
+- `arkPrivateAssetControlPlaneURL` 只从站点推导 `ark.<region>.volcengineapi.com` / `byteplusapi.com`，测试用 override 不对外。
+- `base.Credentials.Sign` 会把 `URL.Path` 和全部请求头纳入签名，包括 `Accept`。
+- `ArkPrivateAssetBinding` 的唯一键是 `(ResourceID, ProjectName)`，切换供应商后会复用上一家的 `ArkAssetID`。
+- 切换站点/Region/Project/AK 时只清空 `DefaultGroupID`。
+
+## 4. 设计
+
+### 4.1 配置
+
+`site` 增加第三值 `videoclaw`：
+
+| 配置项 | 行为 |
+| --- | --- |
+| `site` | `volcengine` / `byteplus` / `videoclaw` |
+| `region` | 选 `videoclaw` 时服务端强制 `cn-beijing`，忽略前端传值；设置页置为只读 |
+| `projectName` | `videoclaw` 默认 `default`，收进高级选项；仍允许修改，但视频请求必须使用相同值 |
+| `callbackBaseUrl` | 不变；为空时回退 `CANVAS_PUBLIC_BASE_URL` |
+| `accessKeyId` / `accessKeySecret` | 必填；管理员在厂商「凭证管理 → AK/SK 凭证 → 签发 AK/SK」获取 |
+| `enabled` / `realEnabled` / `virtualEnabled` | 不变；一期 `realEnabled` 保持关闭 |
+
+### 4.2 控制面端点与签名
+
+新增 `arkPrivateAssetControlPlaneEndpoint(site, region) (string, error)` 取代 `...URL`：
+
+- `volcengine` → `https://ark.<region>.volcengineapi.com/`
+- `byteplus` → `https://ark.<region>.byteplusapi.com/`
+- `videoclaw` → `https://open.feeling.ltd/api/v1/private/sd2/assets`
+
+`callArkPrivateAssetAPI` 在该 endpoint 上追加 `Action` / `Version`。签名继续使用 `base.Credentials{Region, Service: "ark"}`，因为 `videoclaw` 的 Region 固定 `cn-beijing`，与文档 scope 一致。
+
+`videoclaw` 分支在 `Sign` 前移除 `Accept`，签名后补回，保证 `SignedHeaders` 与文档的 `content-type;host;x-content-sha256;x-date` 一致。官方站点行为不变。
+
+测试用 `arkPrivateAssetAPIBaseURLOverride` 保持原样，不追加路径。
+
+### 4.3 数据与迁移
+
+`ArkPortraitGroup` / `ArkPortraitSession` 已存 `site`，旧数据为 `volcengine`，无需处理。切换站点后 `arkPortraitGroupAvailable` 与 session 一致性检查会让旧组、旧会话自然不可用，符合预期。
+
+`ArkPrivateAssetBinding` 增加 `Site string`（默认 `volcengine`），唯一索引改为 `(ResourceID, ProjectName, Site)`；查询函数增加 site 条件。这样切换供应商不会复用上一家的 `ArkAssetID`。
+
+新增 migration v94 `ark_asset_provider`：
+
+1. 加列并用 `volcengine` 回填
+2. 删除旧唯一索引 `idx_ark_private_asset_binding_resource_project`
+3. 创建新唯一索引 `(resource_id, project_name, site)`
+4. SQLite 与 PostgreSQL 分支都要覆盖
+
+### 4.4 渠道供应商匹配与降级
+
+后端在 `prepareArkPrivateAssetReferences` 内判断渠道供应商与素材站点是否一致：
+
+| 场景 | 行为 |
+| --- | --- |
+| 渠道供应商 == 素材站点 | 保持现状：自动同步 AIGC 图片并改写为 `asset://` |
+| 不一致 + AIGC 参考图 | 跳过同步，保留公网 URL |
+| 不一致 + 已带 `asset://` | 原样透传（ID 来源无法归属），由上游报错；文档记录该限制 |
+| 素材库未启用或凭据不全 | 跳过同步，保留公网 URL |
+
+渠道供应商从 `providerConfig` 的 BaseURL host 判断：
+
+- `open.feeling.ltd` → `videoclaw`
+- `*.volcengineapi.com` / `*.volces.com` → `volcengine`
+- `*.byteplusapi.com` / `*.bytepluses.com` → `byteplus`
+- 其他无法识别的自定义代理 → 返回空串，保持原有同步行为，避免影响既有网关
+
+前端 `usesArkVideoAssetReference` 保持不动，避免前后端两套规则。
+
+### 4.5 前端
+
+- 管理员设置页站点下拉增加 `Video Claw`；选中后 Region 固定 `cn-beijing` 且只读，控制面提示显示 `https://open.feeling.ltd/api/v1/private/sd2/assets`。
+- ProjectName 收进「高级」区域，默认 `default`。
+- AK/SK 输入说明补充：在厂商「凭证管理 → AK/SK 凭证」签发，不复用 Bearer Key。
+- `web/src/services/api/auth.ts` 的 site 联合类型增加 `"videoclaw"`。
+
+### 4.6 二期预留
+
+- `HandleArkPortraitCallback` 按站点分支：`videoclaw` 不解释 `resultCode`，校验 state/token 后直接调用 `GetVisualValidateResult`。
+- `arkPortraitH5Link` 对 `videoclaw` 原样透传，不追加 `lng`。
+- 视频/音频素材上传。
+
+## 5. 错误处理
+
+- 上游失败继续透传 `ResponseMetadata.Error` 的 `Code` / `Message`，现有 `arkPrivateAssetUpstreamDetail` 已覆盖。
+- 签名或 Host 不匹配时，错误信息需要包含站点与控制面地址，便于管理员定位。
+- 供应商不匹配不视为错误，只降级并保留公网 URL。
+- 素材库凭据不全时沿用现有提示，不阻塞普通生成。
+
+## 6. 测试
+
+后端单测：
+
+1. `arkPrivateAssetControlPlaneEndpoint`：三个站点的地址；`videoclaw` 强制 Region。
+2. `videoclaw` 签名：本地 httptest 校验 path、`Action`/`Version`、`SignedHeaders` 恰好为 `content-type;host;x-content-sha256;x-date`。
+3. binding 隔离：同 `ResourceID` + `ProjectName`、不同 site 不复用旧 ID。
+4. 渠道供应商判断：`open.feeling.ltd`、火山、BytePlus、其他代理。
+5. 降级：渠道与站点不一致时保留公网 URL，不调用 CreateAsset。
+
+手工验收（需要管理员先签发 AK/SK）：
+
+1. 后台选 `Video Claw`、粘贴 AK/SK、开启素材库但关闭真人。
+2. 用虚拟素材组或默认组上传一张图片，确认方舟素材 ID 生成。
+3. 用该渠道的 Seedance 模型生成，抓上游请求确认参考图为 `asset://`。
+4. 切到另一个 Seedance 模型再生成一次，确认同一 `asset://` 可用。
+5. 切到官方方舟渠道生成，确认参考图回退为公网 URL。
+
+## 7. 风险与待实测
+
+1. `/api/v3` 视频请求未声明 `ProjectName` 字段（允许 additionalProperties）。若供应商按 API Key 默认项目解析 `asset://`，而配置的 `ProjectName` 不是 `default`，引用会失败。缓解：默认固定 `default`，实测后再放开。
+2. `Accept` 头处理需要在 httptest 中确认；如果供应商接受额外签名头，可以简化为保留。
+3. 素材审核状态字段 `Moderation` / `Error` 是否与官方一致，只影响状态展示，不影响 ID 链路。
+4. 控制台暂未提供真人认证入口，二期必须用真实手机完成一次 H5 回调验证。
+
+## 8. 改动文件
+
+- `backend/internal/app/settings_ark_assets.go`：站点枚举、Region 强制、提示文案
+- `backend/internal/app/provider_ark_private_assets.go`：endpoint、签名头、binding site、渠道供应商判断
+- `backend/internal/model/models_platform.go`：binding 增加 `Site`
+- `backend/internal/database/migrations.go`：v94 迁移
+- `web/src/pages/admin/settings/ark-private-assets-settings-page.tsx`
+- `web/src/services/api/auth.ts`
+- `docs/content/docs/backend/http-api.mdx`
+- `docs/content/docs/backend/code-map.mdx`
+- `docs/content/docs/backend/backend-database.mdx`
+- `docs/content/docs/progress/pending-test.mdx`
+
+## 9. 上线与回滚
+
+- 上线：管理员配置 `videoclaw` + AK/SK，开启素材库，真人保持关闭。
+- 回滚：站点切回 `volcengine`；旧 binding 按 site 隔离不会误用；已认证的 `videoclaw` 素材在官方渠道自动降级为公网 URL。
+- 不涉及删除数据；v94 只加列和索引。

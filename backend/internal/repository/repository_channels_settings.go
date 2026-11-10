@@ -167,9 +167,9 @@ func (r *Repository) SaveSystemSettings(settings ...*model.SystemSetting) error 
 	})
 }
 
-func (r *Repository) ArkPrivateAssetBinding(resourceID string, projectName string) (*model.ArkPrivateAssetBinding, error) {
+func (r *Repository) ArkPrivateAssetBinding(resourceID string, projectName string, site string) (*model.ArkPrivateAssetBinding, error) {
 	var binding model.ArkPrivateAssetBinding
-	if err := r.db.Where("resource_id = ? AND project_name = ?", resourceID, projectName).First(&binding).Error; err != nil {
+	if err := r.db.Where("resource_id = ? AND project_name = ? AND site = ?", resourceID, projectName, site).First(&binding).Error; err != nil {
 		return nil, err
 	}
 	return &binding, nil
@@ -180,7 +180,7 @@ func (r *Repository) ArkPrivateAssetBinding(resourceID string, projectName strin
 // importing the same image repeatedly.
 func (r *Repository) CreateArkPrivateAssetBinding(binding *model.ArkPrivateAssetBinding) (bool, error) {
 	result := r.db.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "resource_id"}, {Name: "project_name"}},
+		Columns:   []clause.Column{{Name: "resource_id"}, {Name: "project_name"}, {Name: "site"}},
 		DoNothing: true,
 	}).Create(binding)
 	if result.Error != nil {

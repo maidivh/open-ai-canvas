@@ -340,8 +340,8 @@ export type AdminArkPrivateAssetSetting = {
     realReviewRequired: boolean;
     virtualReviewRequired: boolean;
     realAuthorizationDays: number;
-    /** 方舟站点：火山引擎或 BytePlus 海外站，决定控制面域名。 */
-    site: "volcengine" | "byteplus";
+    /** 方舟站点：火山引擎、BytePlus 海外站或 Video Claw，决定控制面域名。 */
+    site: "volcengine" | "byteplus" | "videoclaw";
     /** 真人认证回调使用的站点公网根地址；为空时后端使用 CANVAS_PUBLIC_BASE_URL。 */
     callbackBaseUrl: string;
     region: string;

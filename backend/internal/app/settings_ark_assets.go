@@ -17,7 +17,11 @@ const arkPrivateAssetSettingKey = "ark_private_assets"
 const (
 	arkSiteVolcengine = "volcengine"
 	arkSiteBytePlus   = "byteplus"
+	arkSiteVideoClaw  = "videoclaw"
 )
+
+// Video Claw 的素材接口固定使用火山兼容签名，Region 也固定为 cn-beijing。
+const arkSiteVideoClawRegion = "cn-beijing"
 
 const (
 	defaultArkRealGroupLimit        = 5
@@ -265,8 +269,12 @@ func arkPrivateAssetSettingFromRequest(req ArkPrivateAssetSettingRequest, curren
 		next.RealAuthorizationDays = current.RealAuthorizationDays
 	}
 	next = normalizeArkPrivateAssetSetting(next)
-	if next.Site != arkSiteVolcengine && next.Site != arkSiteBytePlus {
-		return next, BadAuthRequest("方舟站点只支持 volcengine（火山引擎）或 byteplus（BytePlus 海外站）")
+	switch next.Site {
+	case arkSiteVolcengine, arkSiteBytePlus:
+	case arkSiteVideoClaw:
+		next.Region = arkSiteVideoClawRegion
+	default:
+		return next, BadAuthRequest("方舟站点只支持 volcengine（火山引擎）、byteplus（BytePlus 海外站）或 videoclaw（Video Claw）")
 	}
 	if next.CallbackBaseURL != "" {
 		if err := validatePaymentPublicBaseURL(next.CallbackBaseURL); err != nil {
@@ -274,7 +282,7 @@ func arkPrivateAssetSettingFromRequest(req ArkPrivateAssetSettingRequest, curren
 		}
 	}
 	if next.Region != "" {
-		if _, err := arkPrivateAssetControlPlaneURL(next.Site, next.Region); err != nil {
+		if _, err := arkPrivateAssetControlPlaneEndpoint(next.Site, next.Region); err != nil {
 			return next, BadAuthRequest(err.Error())
 		}
 	}
@@ -305,6 +313,12 @@ func normalizeArkPrivateAssetSetting(value arkPrivateAssetSettingValue) arkPriva
 	value.Site = strings.ToLower(strings.TrimSpace(value.Site))
 	if value.Site == "" {
 		value.Site = arkSiteVolcengine
+	}
+	if value.Site == arkSiteVideoClaw {
+		value.Region = arkSiteVideoClawRegion
+		if value.ProjectName == "" {
+			value.ProjectName = "default"
+		}
 	}
 	value.CallbackBaseURL = strings.TrimRight(strings.TrimSpace(value.CallbackBaseURL), "/")
 	value.Region = strings.ToLower(strings.TrimSpace(value.Region))

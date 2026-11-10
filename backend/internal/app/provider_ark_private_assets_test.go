@@ -12,17 +12,41 @@ import (
 )
 
 func TestArkPrivateAssetUsesRegionalArkControlPlane(t *testing.T) {
-	value, err := arkPrivateAssetControlPlaneURL("", "test-region")
+	value, err := arkPrivateAssetControlPlaneEndpoint("", "test-region")
 	if err != nil || value != "https://ark.test-region.volcengineapi.com" {
-		t.Fatalf("arkPrivateAssetControlPlaneURL() = %q, %v", value, err)
+		t.Fatalf("arkPrivateAssetControlPlaneEndpoint() = %q, %v", value, err)
 	}
-	value, err = arkPrivateAssetControlPlaneURL(arkSiteBytePlus, "AP-Southeast-1")
+	value, err = arkPrivateAssetControlPlaneEndpoint(arkSiteBytePlus, "AP-Southeast-1")
 	if err != nil || value != "https://ark.ap-southeast-1.byteplusapi.com" {
 		t.Fatalf("BytePlus control plane = %q, %v", value, err)
 	}
+	value, err = arkPrivateAssetControlPlaneEndpoint(arkSiteVideoClaw, "")
+	if err != nil || value != "https://open.feeling.ltd/api/v1/private/sd2/assets" {
+		t.Fatalf("Video Claw control plane = %q, %v", value, err)
+	}
 	for _, input := range [][2]string{{"aws", "cn-beijing"}, {arkSiteBytePlus, "ap.southeast"}, {arkSiteVolcengine, ""}} {
-		if _, err := arkPrivateAssetControlPlaneURL(input[0], input[1]); err == nil {
+		if _, err := arkPrivateAssetControlPlaneEndpoint(input[0], input[1]); err == nil {
 			t.Fatalf("%v should be rejected", input)
+		}
+	}
+}
+
+func TestArkAssetProviderFromBaseURL(t *testing.T) {
+	cases := []struct {
+		baseURL string
+		want    string
+	}{
+		{"https://open.feeling.ltd/api/v3", arkSiteVideoClaw},
+		{"https://ark.cn-beijing.volces.com/api/v3", arkSiteVolcengine},
+		{"https://ark.cn-beijing.volcengineapi.com", arkSiteVolcengine},
+		{"https://ark.ap-southeast.bytepluses.com/api/v3", arkSiteBytePlus},
+		{"https://ark.ap-southeast-1.byteplusapi.com", arkSiteBytePlus},
+		{"https://proxy.example.com/api/v3", ""},
+		{"", ""},
+	}
+	for _, item := range cases {
+		if got := arkAssetProviderFromBaseURL(item.baseURL); got != item.want {
+			t.Fatalf("arkAssetProviderFromBaseURL(%q) = %q, want %q", item.baseURL, got, item.want)
 		}
 	}
 }
@@ -95,6 +119,51 @@ func TestCallArkPrivateAssetAPIUsesIDForGetAsset(t *testing.T) {
 	}, "GetAsset", map[string]interface{}{"Id": "asset-test", "ProjectName": "project-test"})
 	if err != nil {
 		t.Fatalf("callArkPrivateAssetAPI() error = %v", err)
+	}
+}
+
+func TestCallArkPrivateAssetAPIUsesVideoClawSigningScope(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/api/v1/private/sd2/assets" {
+			t.Errorf("path = %s", request.URL.Path)
+		}
+		if request.URL.Query().Get("Action") != "CreateAssetGroup" || request.URL.Query().Get("Version") != arkPrivateAssetAPIVersion {
+			t.Errorf("query = %s", request.URL.RawQuery)
+		}
+		authorization := request.Header.Get("Authorization")
+		if !strings.Contains(authorization, "/cn-beijing/ark/request") {
+			t.Errorf("credential scope = %s", authorization)
+		}
+		if !strings.Contains(authorization, "SignedHeaders=content-type;host;x-content-sha256;x-date") {
+			t.Errorf("signed headers = %s", authorization)
+		}
+		if request.Header.Get("Accept") != "application/json" {
+			t.Errorf("accept header = %q", request.Header.Get("Accept"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"Result":{"Id":"group-videoclaw"}}`))
+	}))
+	defer server.Close()
+
+	previousBaseURL := arkPrivateAssetAPIBaseURLOverride
+	arkPrivateAssetAPIBaseURLOverride = server.URL + "/api/v1/private/sd2/assets"
+	t.Cleanup(func() { arkPrivateAssetAPIBaseURLOverride = previousBaseURL })
+
+	response, err := callArkPrivateAssetAPI(context.Background(), arkPrivateAssetSettingValue{
+		Site:            arkSiteVideoClaw,
+		Region:          arkSiteVideoClawRegion,
+		ProjectName:     "default",
+		AccessKeyID:     "test-access-key",
+		AccessKeySecret: "test-secret-key",
+	}, "CreateAssetGroup", map[string]interface{}{
+		"Name": "seedance-assets", "GroupType": "AIGC", "ProjectName": "default",
+	})
+	if err != nil {
+		t.Fatalf("callArkPrivateAssetAPI() error = %v", err)
+	}
+	if got := arkPrivateAssetResponseField(response, "Id"); got != "group-videoclaw" {
+		t.Fatalf("group ID = %q", got)
 	}
 }
 

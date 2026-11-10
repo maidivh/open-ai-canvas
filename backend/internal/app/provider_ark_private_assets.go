@@ -72,6 +72,11 @@ func (s *Service) prepareArkPrivateAssetReferences(ctx context.Context, userID s
 	if !automaticSyncEnabled {
 		return nil
 	}
+	// 素材 ID 按供应商隔离：渠道明确属于其他供应商时不再上传到当前素材库，
+	// 保留公网参考 URL，避免把另一家的 asset:// 发给上游。
+	if provider := arkAssetProviderFromBaseURL(input.Config.BaseURL); provider != "" && provider != setting.Site {
+		return nil
+	}
 	if taskID := taskExecutionID(ctx); taskID != "" {
 		_ = s.repo.UpdateTaskProgress(taskID, "正在准备参考素材", 0)
 	}
@@ -174,7 +179,7 @@ func (s *Service) SyncResourceToArkPrivateAsset(ctx context.Context, actor *mode
 }
 
 func (s *Service) ensureArkPrivateAsset(ctx context.Context, userID string, resource *model.Resource, settingRecord *model.SystemSetting, setting *arkPrivateAssetSettingValue) (string, error) {
-	binding, err := s.repo.ArkPrivateAssetBinding(resource.ID, setting.ProjectName)
+	binding, err := s.repo.ArkPrivateAssetBinding(resource.ID, setting.ProjectName, setting.Site)
 	if err == nil {
 		if shouldResumeArkPrivateAssetPolling(binding) {
 			// 素材已创建成功，只是旧版 GetAsset 参数错误导致轮询失败；恢复轮询，
@@ -206,6 +211,7 @@ func (s *Service) ensureArkPrivateAsset(ctx context.Context, userID string, reso
 			UserID:      userID,
 			ResourceID:  resource.ID,
 			ProjectName: setting.ProjectName,
+			Site:        setting.Site,
 			Status:      arkPrivateAssetStatusNew,
 		}
 		created, err := s.repo.CreateArkPrivateAssetBinding(binding)
@@ -213,7 +219,7 @@ func (s *Service) ensureArkPrivateAsset(ctx context.Context, userID string, reso
 			return "", err
 		}
 		if !created {
-			binding, err = s.repo.ArkPrivateAssetBinding(resource.ID, setting.ProjectName)
+			binding, err = s.repo.ArkPrivateAssetBinding(resource.ID, setting.ProjectName, setting.Site)
 			if err != nil {
 				return "", err
 			}
@@ -350,7 +356,7 @@ func (s *Service) waitForArkPrivateAsset(ctx context.Context, binding *model.Ark
 		if err := sleepContext(ctx, 2*time.Second); err != nil {
 			return "", err
 		}
-		latest, err := s.repo.ArkPrivateAssetBinding(binding.ResourceID, binding.ProjectName)
+		latest, err := s.repo.ArkPrivateAssetBinding(binding.ResourceID, binding.ProjectName, binding.Site)
 		if err != nil {
 			return "", err
 		}
@@ -376,11 +382,11 @@ func callArkPrivateAssetAPI(ctx context.Context, setting arkPrivateAssetSettingV
 	if err != nil {
 		return nil, err
 	}
-	baseURL, err := arkPrivateAssetControlPlaneURL(setting.Site, setting.Region)
+	endpointURL, err := arkPrivateAssetControlPlaneEndpoint(setting.Site, setting.Region)
 	if err != nil {
 		return nil, err
 	}
-	endpoint, err := url.Parse(baseURL)
+	endpoint, err := url.Parse(endpointURL)
 	if err != nil {
 		return nil, err
 	}
@@ -393,15 +399,23 @@ func callArkPrivateAssetAPI(ctx context.Context, setting arkPrivateAssetSettingV
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
+	if setting.Site != arkSiteVideoClaw {
+		req.Header.Set("Accept", "application/json")
+	}
 	credentials := base.Credentials{
 		AccessKeyID:     setting.AccessKeyID,
 		SecretAccessKey: setting.AccessKeySecret,
 		Region:          setting.Region,
 		Service:         "ark",
 	}
+	signed := credentials.Sign(req)
+	if setting.Site == arkSiteVideoClaw {
+		// Video Claw 的签名范围固定为 content-type;host;x-content-sha256;x-date，
+		// 额外请求头在签名后再补，避免 SignedHeaders 与文档不一致。
+		signed.Header.Set("Accept", "application/json")
+	}
 	var response map[string]interface{}
-	if err := doJSON(credentials.Sign(req), &response); err != nil {
+	if err := doJSON(signed, &response); err != nil {
 		// doJSON 对非 2xx 响应只按状态码生成通用提示（401/403 会被说成“模型服务鉴权失败”），
 		// 方舟把真实原因（如 SubscriptionRequired）放在响应体的 ResponseMetadata.Error 里，必须还原。
 		var httpErr providerHTTPError
@@ -441,15 +455,20 @@ func arkPrivateAssetUpstreamDetail(response map[string]interface{}) string {
 	return detail
 }
 
-// arkPrivateAssetControlPlaneURL 按站点和 Region 推导方舟控制面（OpenAPI）地址：
-// 火山引擎为 ark.<region>.volcengineapi.com，BytePlus 海外站为 ark.<region>.byteplusapi.com。
-// 两个站点使用相同的 HMAC-SHA256 签名与 2024-01-01 接口版本。
-func arkPrivateAssetControlPlaneURL(site, region string) (string, error) {
+// arkPrivateAssetControlPlaneEndpoint 按站点和 Region 推导素材库控制面地址：
+// 火山引擎为 ark.<region>.volcengineapi.com，BytePlus 海外站为 ark.<region>.byteplusapi.com，
+// Video Claw 固定走 open.feeling.ltd 的 SD2 私有素材接口。
+// 三个站点使用相同的 HMAC-SHA256 签名与 2024-01-01 接口版本。
+func arkPrivateAssetControlPlaneEndpoint(site, region string) (string, error) {
 	if override := strings.TrimSpace(arkPrivateAssetAPIBaseURLOverride); override != "" {
 		return override, nil
 	}
+	site = strings.ToLower(strings.TrimSpace(site))
+	if site == arkSiteVideoClaw {
+		return "https://open.feeling.ltd/api/v1/private/sd2/assets", nil
+	}
 	host := "volcengineapi.com"
-	switch strings.ToLower(strings.TrimSpace(site)) {
+	switch site {
 	case "", arkSiteVolcengine:
 	case arkSiteBytePlus:
 		host = "byteplusapi.com"
@@ -466,6 +485,26 @@ func arkPrivateAssetControlPlaneURL(site, region string) (string, error) {
 		}
 	}
 	return "https://ark." + region + "." + host, nil
+}
+
+// arkAssetProviderFromBaseURL 从视频渠道的 Base URL 识别素材供应商。
+// 无法识别的代理返回空串，调用方保持原有行为，避免影响既有自定义网关。
+func arkAssetProviderFromBaseURL(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return ""
+	}
+	host := strings.ToLower(parsed.Hostname())
+	switch {
+	case host == "open.feeling.ltd" || strings.HasSuffix(host, ".open.feeling.ltd"):
+		return arkSiteVideoClaw
+	case strings.HasSuffix(host, ".volcengineapi.com"), strings.HasSuffix(host, ".volces.com"):
+		return arkSiteVolcengine
+	case strings.HasSuffix(host, ".byteplusapi.com"), strings.HasSuffix(host, ".bytepluses.com"):
+		return arkSiteBytePlus
+	default:
+		return ""
+	}
 }
 
 func arkPrivateAssetResponseField(response map[string]interface{}, keys ...string) string {
