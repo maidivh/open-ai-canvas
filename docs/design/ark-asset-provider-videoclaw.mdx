@@ -65,18 +65,18 @@ description: 在现有方舟素材库实现上增加 videoclaw 站点，复用�
 
 ### 4.1 配置
 
-`site` 增加 `videoclaw`、`wantrace` 两个值：
+`site` 增加 `videoclaw` 值：
 
 | 配置项 | 行为 |
 | --- | --- |
-| `site` | `volcengine` / `byteplus` / `videoclaw` / `wantrace` |
-| `region` | 选 `videoclaw` / `wantrace` 时服务端强制 `cn-beijing`，忽略前端传值；设置页置为只读 |
-| `projectName` | `videoclaw` / `wantrace` 默认 `default`，设置页只读；仍允许直接调 API 修改，但视频请求必须使用相同值 |
+| `site` | `volcengine` / `byteplus` / `videoclaw` |
+| `region` | 选 `videoclaw` 时服务端强制 `cn-beijing`，忽略前端传值；设置页置为只读 |
+| `projectName` | `videoclaw` 默认 `default`，设置页只读；仍允许直接调 API 修改，但视频请求必须使用相同值 |
 | `callbackBaseUrl` | 不变；为空时回退 `CANVAS_PUBLIC_BASE_URL` |
-| `accessKeyId` / `accessKeySecret` | 必填；管理员在对应品牌控制台「凭证管理 → AK/SK 凭证 → 签发 AK/SK」获取 |
+| `accessKeyId` / `accessKeySecret` | 必填；管理员在厂商控制台（open.feeling.ltd）「凭证管理 → AK/SK 凭证 → 签发 AK/SK」获取 |
 | `enabled` / `realEnabled` / `virtualEnabled` | 不变；一期 `realEnabled` 保持关闭 |
 
-素材库站点必须与视频渠道使用同一个网关域名；`videoclaw` 对应 `open.feeling.ltd`，`wantrace` 对应 `api.wantrace.com`。
+`open.feeling.ltd` 是厂商控制台，素材接口域名是 `api.wantrace.com`；素材库与视频渠道必须使用同一个接口域名。
 
 ### 4.2 控制面端点与签名
 
@@ -84,12 +84,11 @@ description: 在现有方舟素材库实现上增加 videoclaw 站点，复用�
 
 - `volcengine` → `https://ark.<region>.volcengineapi.com/`
 - `byteplus` → `https://ark.<region>.byteplusapi.com/`
-- `videoclaw` → `https://open.feeling.ltd/api/v1/private/sd2/assets`
-- `wantrace` → `https://api.wantrace.com/api/v1/private/sd2/assets`
+- `videoclaw` → `https://api.wantrace.com/api/v1/private/sd2/assets`
 
-`callArkPrivateAssetAPI` 在该 endpoint 上追加 `Action` / `Version`。签名继续使用 `base.Credentials{Region, Service: "ark"}`，因为 `videoclaw` / `wantrace` 的 Region 固定 `cn-beijing`，与文档 scope 一致。
+`callArkPrivateAssetAPI` 在该 endpoint 上追加 `Action` / `Version`。签名继续使用 `base.Credentials{Region, Service: "ark"}`，因为 `videoclaw` 的 Region 固定 `cn-beijing`，与文档 scope 一致。
 
-`videoclaw` / `wantrace` 分支在 `Sign` 前移除 `Accept`，签名后补回，保证 `SignedHeaders` 与文档的 `content-type;host;x-content-sha256;x-date` 一致。官方站点行为不变。
+`videoclaw` 分支在 `Sign` 前移除 `Accept`，签名后补回，保证 `SignedHeaders` 与文档的 `content-type;host;x-content-sha256;x-date` 一致。官方站点行为不变。
 
 测试用 `arkPrivateAssetAPIBaseURLOverride` 保持原样，不追加路径。
 
@@ -119,7 +118,7 @@ description: 在现有方舟素材库实现上增加 videoclaw 站点，复用�
 
 渠道供应商从 `providerConfig` 的 BaseURL host 判断：
 
-- `open.feeling.ltd` → `videoclaw`
+- `open.feeling.ltd` / `api.wantrace.com` → `videoclaw`（控制台与接口域名）
 - `*.volcengineapi.com` / `*.volces.com` → `volcengine`
 - `*.byteplusapi.com` / `*.bytepluses.com` → `byteplus`
 - 其他无法识别的自定义代理 → 返回空串，保持原有同步行为，避免影响既有网关
@@ -128,7 +127,7 @@ description: 在现有方舟素材库实现上增加 videoclaw 站点，复用�
 
 ### 4.5 前端
 
-- 管理员设置页站点下拉增加 `Video Claw`；选中后 Region 固定 `cn-beijing` 且只读，控制面提示显示 `https://open.feeling.ltd/api/v1/private/sd2/assets`。
+- 管理员设置页站点下拉增加 `Video Claw`；选中后 Region 固定 `cn-beijing` 且只读，控制面提示显示 `https://api.wantrace.com/api/v1/private/sd2/assets`。
 - ProjectName 收进「高级」区域，默认 `default`。
 - AK/SK 输入说明补充：在厂商「凭证管理 → AK/SK 凭证」签发，不复用 Bearer Key。
 - `web/src/services/api/auth.ts` 的 site 联合类型增加 `"videoclaw"`。

@@ -62,18 +62,19 @@ type ArkPrivateAssetPayload = Pick<
 
 const VIDEO_CLAW_REGION = "cn-beijing";
 const VIDEO_CLAW_PROJECT = "default";
-const ARK_SITE_VALUES: ArkSite[] = ["volcengine", "byteplus", "videoclaw", "wantrace"];
+const VIDEO_CLAW_API_BASE = "https://api.wantrace.com";
+const ARK_SITE_VALUES: ArkSite[] = ["volcengine", "byteplus", "videoclaw"];
 
 function normalizeArkSite(value: unknown): ArkSite {
-    return value === "byteplus" || value === "videoclaw" || value === "wantrace" ? value : "volcengine";
+    return value === "byteplus" || value === "videoclaw" ? value : "volcengine";
 }
 
-// Video Claw / Wantrace 使用同一套火山兼容签名，Region 与 ProjectName 固定。
-function usesFixedAssetProject(site: ArkSite) {
-    return site === "videoclaw" || site === "wantrace";
+// Video Claw 使用火山兼容签名，Region 与 ProjectName 固定；控制台在 open.feeling.ltd，接口在 api.wantrace.com。
+function usesVideoClawSite(site: ArkSite) {
+    return site === "videoclaw";
 }
 
-// 站点决定控制面域名与推理 Base URL；火山 / BytePlus 的 Region 由管理员填写，Video Claw / Wantrace 固定 cn-beijing。
+// 站点决定控制面域名与推理 Base URL；火山 / BytePlus 的 Region 由管理员填写，Video Claw 固定 cn-beijing。
 const ARK_SITE_META: Record<ArkSite, { label: string; regionPlaceholder: string; controlPlane: (region: string) => string; inference: string }> = {
     volcengine: {
         label: "火山引擎（中国站）",
@@ -88,16 +89,10 @@ const ARK_SITE_META: Record<ArkSite, { label: string; regionPlaceholder: string;
         inference: "https://ark.ap-southeast.bytepluses.com/api/v3",
     },
     videoclaw: {
-        label: "Video Claw（open.feeling.ltd）",
+        label: "Video Claw / Wantrace（api.wantrace.com）",
         regionPlaceholder: VIDEO_CLAW_REGION,
-        controlPlane: () => "https://open.feeling.ltd/api/v1/private/sd2/assets",
-        inference: "https://open.feeling.ltd/api/v3",
-    },
-    wantrace: {
-        label: "Wantrace（api.wantrace.com）",
-        regionPlaceholder: VIDEO_CLAW_REGION,
-        controlPlane: () => "https://api.wantrace.com/api/v1/private/sd2/assets",
-        inference: "https://api.wantrace.com/api/v3",
+        controlPlane: () => `${VIDEO_CLAW_API_BASE}/api/v1/private/sd2/assets`,
+        inference: `${VIDEO_CLAW_API_BASE}/api/v3`,
     },
 };
 
@@ -398,24 +393,22 @@ function ArkPrivateAssetsSettingsForm() {
                         status={<AdminStatusBadge label={prerequisitesReady ? "已配置" : "待配置"} tone={prerequisitesReady ? "success" : "neutral"} />}
                     >
                         <div className="admin-ark-form-grid">
-                            <Form.Item name="site" label="方舟站点" extra={`推理渠道 Base URL 参考：${siteMeta.inference}`}>
+                            <Form.Item name="site" label="方舟站点" extra={`控制台：open.feeling.ltd；接口与素材库域名：api.wantrace.com。推理 Base URL 参考：${siteMeta.inference}`}>
                                 <Select
                                     options={ARK_SITE_VALUES.map((value) => ({ value, label: ARK_SITE_META[value].label }))}
                                     aria-label="方舟站点"
                                     onChange={(value: ArkSite) => {
-                                        if (usesFixedAssetProject(value)) form.setFieldsValue({ region: VIDEO_CLAW_REGION, projectName: VIDEO_CLAW_PROJECT });
+                                        if (usesVideoClawSite(value)) {
+                                            form.setFieldsValue({ region: VIDEO_CLAW_REGION, projectName: VIDEO_CLAW_PROJECT });
+                                        }
                                     }}
                                 />
                             </Form.Item>
-                            <Form.Item
-                                name="region"
-                                label="Region"
-                                extra={usesFixedAssetProject(draftSite) ? `${siteMeta.label} 固定使用 cn-beijing，无需修改。` : `控制面地址：${siteMeta.controlPlane(normalizedDraft.region)}。请填写已开通素材库的区域。`}
-                            >
-                                <Input autoComplete="off" placeholder={siteMeta.regionPlaceholder} disabled={usesFixedAssetProject(draftSite)} />
+                            <Form.Item name="region" label="Region" extra={usesVideoClawSite(draftSite) ? `${siteMeta.label} 固定使用 cn-beijing，无需修改。` : `控制面地址：${siteMeta.controlPlane(normalizedDraft.region)}。请填写已开通素材库的区域。`}>
+                                <Input autoComplete="off" placeholder={siteMeta.regionPlaceholder} disabled={usesVideoClawSite(draftSite)} />
                             </Form.Item>
-                            <Form.Item name="projectName" label="Ark ProjectName" extra={usesFixedAssetProject(draftSite) ? `${siteMeta.label} 固定使用 default，与视频生成请求保持一致。` : undefined}>
-                                <Input autoComplete="off" placeholder={usesFixedAssetProject(draftSite) ? VIDEO_CLAW_PROJECT : "方舟项目名称"} disabled={usesFixedAssetProject(draftSite)} />
+                            <Form.Item name="projectName" label="Ark ProjectName" extra={usesVideoClawSite(draftSite) ? `${siteMeta.label} 固定使用 default，与视频生成请求保持一致。` : undefined}>
+                                <Input autoComplete="off" placeholder={usesVideoClawSite(draftSite) ? VIDEO_CLAW_PROJECT : "方舟项目名称"} disabled={usesVideoClawSite(draftSite)} />
                             </Form.Item>
                             <Form.Item name="accessKeyId" label="IAM AccessKey">
                                 <Input autoComplete="off" prefix={<KeyRound className="size-4 text-foreground/35" />} placeholder="仅保存在服务端" />
@@ -572,8 +565,8 @@ function toFormValues(setting: AdminArkPrivateAssetSetting): ArkPrivateAssetForm
         realAuthorizationDays: setting.realAuthorizationDays,
         site: normalizeArkSite(setting.site),
         callbackBaseUrl: setting.callbackBaseUrl || "",
-        region: usesFixedAssetProject(normalizeArkSite(setting.site)) ? VIDEO_CLAW_REGION : setting.region || "",
-        projectName: usesFixedAssetProject(normalizeArkSite(setting.site)) ? setting.projectName || VIDEO_CLAW_PROJECT : setting.projectName || "",
+        region: usesVideoClawSite(normalizeArkSite(setting.site)) ? VIDEO_CLAW_REGION : setting.region || "",
+        projectName: usesVideoClawSite(normalizeArkSite(setting.site)) ? setting.projectName || VIDEO_CLAW_PROJECT : setting.projectName || "",
         accessKeyId: setting.accessKeyId || "",
         accessKeySecret: "",
     };
@@ -600,8 +593,8 @@ function normalizeArkPrivateAssetPayload(values: Partial<ArkPrivateAssetForm>): 
         realAuthorizationDays: wholeNumber(values.realAuthorizationDays, 0),
         site,
         callbackBaseUrl: values.callbackBaseUrl?.trim().replace(/\/+$/, "") || "",
-        region: usesFixedAssetProject(site) ? VIDEO_CLAW_REGION : values.region?.trim().toLowerCase() || "",
-        projectName: usesFixedAssetProject(site) ? values.projectName?.trim() || VIDEO_CLAW_PROJECT : values.projectName?.trim() || "",
+        region: usesVideoClawSite(site) ? VIDEO_CLAW_REGION : values.region?.trim().toLowerCase() || "",
+        projectName: usesVideoClawSite(site) ? values.projectName?.trim() || VIDEO_CLAW_PROJECT : values.projectName?.trim() || "",
         accessKeyId: values.accessKeyId?.trim() || "",
         accessKeySecret: values.accessKeySecret?.trim() || "",
     };

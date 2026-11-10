@@ -21,12 +21,8 @@ func TestArkPrivateAssetUsesRegionalArkControlPlane(t *testing.T) {
 		t.Fatalf("BytePlus control plane = %q, %v", value, err)
 	}
 	value, err = arkPrivateAssetControlPlaneEndpoint(arkSiteVideoClaw, "")
-	if err != nil || value != "https://open.feeling.ltd/api/v1/private/sd2/assets" {
-		t.Fatalf("Video Claw control plane = %q, %v", value, err)
-	}
-	value, err = arkPrivateAssetControlPlaneEndpoint(arkSiteWantrace, "")
 	if err != nil || value != "https://api.wantrace.com/api/v1/private/sd2/assets" {
-		t.Fatalf("Wantrace control plane = %q, %v", value, err)
+		t.Fatalf("Video Claw control plane = %q, %v", value, err)
 	}
 	for _, input := range [][2]string{{"aws", "cn-beijing"}, {arkSiteBytePlus, "ap.southeast"}, {arkSiteVolcengine, ""}} {
 		if _, err := arkPrivateAssetControlPlaneEndpoint(input[0], input[1]); err == nil {
@@ -41,7 +37,7 @@ func TestArkAssetProviderFromBaseURL(t *testing.T) {
 		want    string
 	}{
 		{"https://open.feeling.ltd/api/v3", arkSiteVideoClaw},
-		{"https://api.wantrace.com/api/v3", arkSiteWantrace},
+		{"https://api.wantrace.com/api/v3", arkSiteVideoClaw},
 		{"https://ark.cn-beijing.volces.com/api/v3", arkSiteVolcengine},
 		{"https://ark.cn-beijing.volcengineapi.com", arkSiteVolcengine},
 		{"https://ark.ap-southeast.bytepluses.com/api/v3", arkSiteBytePlus},
