@@ -13,7 +13,7 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 - [x] 管理员签发 AK/SK 后在后台选橙幻保存，确认控制面提示、Region/ProjectName 只读和凭据校验。已验证：保存成功，接口域名 `api.wantrace.com`。
 - [x] 上传一张参考图并用 Seedance 2.0/2.5 生成，抓上游请求确认参考图为 `asset://`；切换同供应商另一模型复用同一 ID。已验证：02:30 的橙幻任务两张参考图均为 `asset://asset-...`，上游 200；绑定表两条 `site=videoclaw` 记录均为 active。
 - [x] 切到官方方舟渠道生成，确认参考图回退为公网 URL，不出现另一家的 `asset://`。已验证：02:44 的火山引擎任务保留 TOS 公网 URL。
-- [ ] 真人认证未在一期开放，`realEnabled` 保持关闭；二期需真实手机完成 H5 回调验证。
+- [ ] 真人认证二期回调容错已实现：`resultCode=10000` 或缺失时继续查询 `GetVisualValidateResult`；`resultCode` 非 10000、或缺失但 `algorithmBaseRespCode` 非 0 时判失败退款。待正式站配置公网 HTTPS 回调后，用真实手机验证认证、`LivenessFace` 建组、真人素材上传和生成时 `asset://`。
 
 ## 合并复审：电商外部钱包与 Claude 思考预算
 

@@ -568,13 +568,21 @@ func (s *Service) HandleArkPortraitCallback(ctx context.Context, state string, q
 		return result(arkPortraitSessionExpired, session.Scope)
 	}
 	resultCode := strings.TrimSpace(query.Get("resultCode"))
-	if resultCode != arkPortraitSuccessCode {
-		detail := "真人认证未通过（resultCode=" + truncateRunes(resultCode, 20)
-		if sub := strings.TrimSpace(query.Get("algorithmBaseRespCode")); sub != "" {
-			detail += "，algorithmBaseRespCode=" + truncateRunes(sub, 20)
-		}
-		_, _ = s.repo.FinishArkPortraitSession(session.ID, arkPortraitSessionFailed, truncateRunes(resultCode, 40), detail+"），请重新发起认证", "真人认证未通过，冻结积分已退回")
+	algorithmCode := strings.TrimSpace(query.Get("algorithmBaseRespCode"))
+	failSession := func(code string, detail string) string {
+		_, _ = s.repo.FinishArkPortraitSession(session.ID, arkPortraitSessionFailed, truncateRunes(code, 40), detail, "真人认证未通过，冻结积分已退回")
 		return result(arkPortraitSessionFailed, session.Scope)
+	}
+	if resultCode != "" && resultCode != arkPortraitSuccessCode {
+		detail := "真人认证未通过（resultCode=" + truncateRunes(resultCode, 20)
+		if algorithmCode != "" {
+			detail += "，algorithmBaseRespCode=" + truncateRunes(algorithmCode, 20)
+		}
+		return failSession(resultCode, detail+"），请重新发起认证")
+	}
+	// 橙幻等代理可能只回传 bytedToken 而不带 resultCode；此时以 GetVisualValidateResult 为准。
+	if resultCode == "" && algorithmCode != "" && algorithmCode != "0" {
+		return failSession(algorithmCode, "真人认证未通过（algorithmBaseRespCode="+truncateRunes(algorithmCode, 20)+"），请重新发起认证")
 	}
 	if token := strings.TrimSpace(query.Get("bytedToken")); token != "" {
 		stored, err := s.decryptSettingSecret(session.BytedTokenCipher)

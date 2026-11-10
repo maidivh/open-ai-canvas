@@ -669,6 +669,8 @@ Skills 的 `tool_completed` / `tool_failed` 事件附带 `skillId`、`skillName`
 | `POST /api/ark-portraits/assets/:id/library` | 把已通过的图片加入素材库「方舟认证」分类，返回 `{ assetId }`；平台素材复制成本人资源 |
 | `GET /api/ark-portraits/assets/:id/file` | 素材预览；上传者、被授权用户与管理员可访问 |
 
+回调带 `resultCode=10000` 或只带 `bytedToken` 时都会继续查询 `GetVisualValidateResult` 换取素材组；`resultCode` 非 10000、或缺失但 `algorithmBaseRespCode` 非 0 时判失败并退回冻结积分。
+
 自建组的图片通过方舟审核后，服务端直接写入素材库：从素材库提交的图片原地移入 `ark` 分类（`previousCategory` 记录原分类），组内直接上传的图片新建素材 `ark-<素材ID>`。素材 payload 带 `arkAssetId` 与 `arkCertification`（`kind`、`scope`、`portraitAssetId`、`groupId`、`groupName`、`arkGroupId`、`certifiedAt`、`expiresAt`、`previousCategory`）。`ark` 分类只能由服务端写入，`PUT` 素材时客户端不能把其他分类改成 `ark`。
 
 管理员接口（service 校验管理员权限）：

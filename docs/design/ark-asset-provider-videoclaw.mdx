@@ -5,7 +5,7 @@ description: 在现有方舟素材库实现上增加 videoclaw 站点，复用�
 
 # Video Claw 素材库接入方案（一期）
 
-> 状态：一期已实施，普通素材库链路已用橙幻渠道真实生成验证；真人认证留二期。
+> 状态：一期已实施，普通素材库链路已用橙幻渠道真实生成验证；二期回调容错代码已就绪，待正式站真实手机验证。
 >
 > 一期只做普通素材库（AIGC 素材组、图片上传、`asset://` 引用）。已验证：同一任务的两张参考图均改写为 `asset://asset-...` 且上游 200；火山引擎渠道自动回退公网 URL。真人认证仍需公网 HTTPS 回调与真实手机验证。
 
@@ -132,7 +132,7 @@ description: 在现有方舟素材库实现上增加 videoclaw 站点，复用�
 - AK/SK 输入说明补充：在厂商「凭证管理 → AK/SK 凭证」签发，不复用 Bearer Key。
 - `web/src/services/api/auth.ts` 的 site 联合类型增加 `"videoclaw"`。
 
-### 4.6 二期预留
+### 4.6 二期：真人认证
 
 官方文档已确认真人流程：
 
@@ -141,9 +141,13 @@ description: 在现有方舟素材库实现上增加 videoclaw 站点，复用�
 - `GetVisualValidateResult(BytedToken, ProjectName)` 返回认证创建的 `LivenessFace` 素材组 `GroupId`。
 - `CreateAsset` 官方字段为 `GroupId`、`URL`、`AssetType`、`Name`、`ProjectName`，没有 `IsRealPerson`。
 
-Video Claw 声称 1:1 映射，因此二期复用现有回调逻辑，不做站点分支；仅在 `resultCode` 缺失时改为查询 `GetVisualValidateResult` 兜底。`lng` 继续追加。上线前必须用一次真实 H5 会话验证回调参数确实透传。
+已实现：
 
-视频/音频素材上传仍留到二期。
+- 回调 `resultCode=10000` 或缺失时继续换取 `GroupId`；`resultCode` 非 10000、或缺失但 `algorithmBaseRespCode` 非 0 时判失败并退款。
+- `H5Link` 继续追加 `lng`。
+- 待正式站用真实手机完成一次 H5 会话，确认橙幻回调参数与 `GroupId` 换取正常。
+
+视频/音频素材上传仍未实现。
 
 ## 5. 错误处理
 
