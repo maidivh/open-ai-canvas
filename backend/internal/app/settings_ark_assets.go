@@ -278,7 +278,7 @@ func arkPrivateAssetSettingFromRequest(req ArkPrivateAssetSettingRequest, curren
 	case arkSiteVideoClaw:
 		next.Region = arkSiteVideoClawRegion
 	default:
-		return next, BadAuthRequest("方舟站点只支持 volcengine（火山引擎）、byteplus（BytePlus 海外站）或 videoclaw（Video Claw）")
+		return next, BadAuthRequest("方舟站点只支持 volcengine（火山引擎）、byteplus（BytePlus 海外站）或 videoclaw（橙幻）")
 	}
 	if next.Site == arkSiteVideoClaw {
 		next.Region = arkSiteVideoClawRegion

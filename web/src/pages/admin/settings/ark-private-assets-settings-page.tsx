@@ -89,7 +89,7 @@ const ARK_SITE_META: Record<ArkSite, { label: string; regionPlaceholder: string;
         inference: "https://ark.ap-southeast.bytepluses.com/api/v3",
     },
     videoclaw: {
-        label: "Video Claw / Wantrace（api.wantrace.com）",
+        label: "橙幻",
         regionPlaceholder: VIDEO_CLAW_REGION,
         controlPlane: () => `${VIDEO_CLAW_API_BASE}/api/v1/private/sd2/assets`,
         inference: `${VIDEO_CLAW_API_BASE}/api/v3`,
@@ -393,7 +393,7 @@ function ArkPrivateAssetsSettingsForm() {
                         status={<AdminStatusBadge label={prerequisitesReady ? "已配置" : "待配置"} tone={prerequisitesReady ? "success" : "neutral"} />}
                     >
                         <div className="admin-ark-form-grid">
-                            <Form.Item name="site" label="方舟站点" extra={`控制台：open.feeling.ltd；接口与素材库域名：api.wantrace.com。推理 Base URL 参考：${siteMeta.inference}`}>
+                            <Form.Item name="site" label="方舟站点" extra={usesVideoClawSite(draftSite) ? "控制台：open.feeling.ltd；接口与素材库域名：api.wantrace.com。" : `推理渠道 Base URL 参考：${siteMeta.inference}`}>
                                 <Select
                                     options={ARK_SITE_VALUES.map((value) => ({ value, label: ARK_SITE_META[value].label }))}
                                     aria-label="方舟站点"
