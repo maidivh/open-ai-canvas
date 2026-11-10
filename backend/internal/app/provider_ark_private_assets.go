@@ -399,7 +399,7 @@ func callArkPrivateAssetAPI(ctx context.Context, setting arkPrivateAssetSettingV
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if setting.Site != arkSiteVideoClaw {
+	if !arkSiteUsesVideoClawCompatibility(setting.Site) {
 		req.Header.Set("Accept", "application/json")
 	}
 	credentials := base.Credentials{
@@ -409,8 +409,8 @@ func callArkPrivateAssetAPI(ctx context.Context, setting arkPrivateAssetSettingV
 		Service:         "ark",
 	}
 	signed := credentials.Sign(req)
-	if setting.Site == arkSiteVideoClaw {
-		// Video Claw 的签名范围固定为 content-type;host;x-content-sha256;x-date，
+	if arkSiteUsesVideoClawCompatibility(setting.Site) {
+		// Video Claw / Wantrace 的签名范围固定为 content-type;host;x-content-sha256;x-date，
 		// 额外请求头在签名后再补，避免 SignedHeaders 与文档不一致。
 		signed.Header.Set("Accept", "application/json")
 	}
@@ -457,15 +457,18 @@ func arkPrivateAssetUpstreamDetail(response map[string]interface{}) string {
 
 // arkPrivateAssetControlPlaneEndpoint 按站点和 Region 推导素材库控制面地址：
 // 火山引擎为 ark.<region>.volcengineapi.com，BytePlus 海外站为 ark.<region>.byteplusapi.com，
-// Video Claw 固定走 open.feeling.ltd 的 SD2 私有素材接口。
-// 三个站点使用相同的 HMAC-SHA256 签名与 2024-01-01 接口版本。
+// Video Claw 固定走 open.feeling.ltd，Wantrace 固定走 api.wantrace.com 的 SD2 私有素材接口。
+// 各站点使用相同的 HMAC-SHA256 签名与 2024-01-01 接口版本。
 func arkPrivateAssetControlPlaneEndpoint(site, region string) (string, error) {
 	if override := strings.TrimSpace(arkPrivateAssetAPIBaseURLOverride); override != "" {
 		return override, nil
 	}
 	site = strings.ToLower(strings.TrimSpace(site))
-	if site == arkSiteVideoClaw {
+	switch site {
+	case arkSiteVideoClaw:
 		return "https://open.feeling.ltd/api/v1/private/sd2/assets", nil
+	case arkSiteWantrace:
+		return "https://api.wantrace.com/api/v1/private/sd2/assets", nil
 	}
 	host := "volcengineapi.com"
 	switch site {
@@ -498,6 +501,8 @@ func arkAssetProviderFromBaseURL(raw string) string {
 	switch {
 	case host == "open.feeling.ltd" || strings.HasSuffix(host, ".open.feeling.ltd"):
 		return arkSiteVideoClaw
+	case host == "api.wantrace.com" || strings.HasSuffix(host, ".wantrace.com"):
+		return arkSiteWantrace
 	case strings.HasSuffix(host, ".volcengineapi.com"), strings.HasSuffix(host, ".volces.com"):
 		return arkSiteVolcengine
 	case strings.HasSuffix(host, ".byteplusapi.com"), strings.HasSuffix(host, ".bytepluses.com"):

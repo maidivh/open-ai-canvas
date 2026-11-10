@@ -18,10 +18,15 @@ const (
 	arkSiteVolcengine = "volcengine"
 	arkSiteBytePlus   = "byteplus"
 	arkSiteVideoClaw  = "videoclaw"
+	arkSiteWantrace   = "wantrace"
 )
 
-// Video Claw 的素材接口固定使用火山兼容签名，Region 也固定为 cn-beijing。
+// Video Claw / Wantrace 的素材接口固定使用火山兼容签名，Region 也固定为 cn-beijing。
 const arkSiteVideoClawRegion = "cn-beijing"
+
+func arkSiteUsesVideoClawCompatibility(site string) bool {
+	return site == arkSiteVideoClaw || site == arkSiteWantrace
+}
 
 const (
 	defaultArkRealGroupLimit        = 5
@@ -271,10 +276,10 @@ func arkPrivateAssetSettingFromRequest(req ArkPrivateAssetSettingRequest, curren
 	next = normalizeArkPrivateAssetSetting(next)
 	switch next.Site {
 	case arkSiteVolcengine, arkSiteBytePlus:
-	case arkSiteVideoClaw:
+	case arkSiteVideoClaw, arkSiteWantrace:
 		next.Region = arkSiteVideoClawRegion
 	default:
-		return next, BadAuthRequest("方舟站点只支持 volcengine（火山引擎）、byteplus（BytePlus 海外站）或 videoclaw（Video Claw）")
+		return next, BadAuthRequest("方舟站点只支持 volcengine（火山引擎）、byteplus（BytePlus 海外站）、videoclaw（Video Claw）或 wantrace（Wantrace）")
 	}
 	if next.CallbackBaseURL != "" {
 		if err := validatePaymentPublicBaseURL(next.CallbackBaseURL); err != nil {
@@ -314,7 +319,7 @@ func normalizeArkPrivateAssetSetting(value arkPrivateAssetSettingValue) arkPriva
 	if value.Site == "" {
 		value.Site = arkSiteVolcengine
 	}
-	if value.Site == arkSiteVideoClaw {
+	if arkSiteUsesVideoClawCompatibility(value.Site) {
 		value.Region = arkSiteVideoClawRegion
 		if value.ProjectName == "" {
 			value.ProjectName = "default"
