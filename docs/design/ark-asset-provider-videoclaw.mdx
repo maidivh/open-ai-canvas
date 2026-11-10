@@ -132,9 +132,16 @@ description: 在现有方舟素材库实现上增加 videoclaw 站点，复用�
 
 ### 4.6 二期预留
 
-- `HandleArkPortraitCallback` 按站点分支：`videoclaw` 不解释 `resultCode`，校验 state/token 后直接调用 `GetVisualValidateResult`。
-- `arkPortraitH5Link` 对 `videoclaw` 原样透传，不追加 `lng`。
-- 视频/音频素材上传。
+官方文档已确认真人流程：
+
+- `CreateVisualValidateSession(CallbackURL, ProjectName)` 返回 `BytedToken`（30 分钟、一次性）与 `H5Link`；`H5Link` 支持 `lng=zh|en|zh-Hant`。
+- 回调固定追加 `bytedToken`、`resultCode`、`algorithmBaseRespCode`、`reqMeasureInfoValue`、`verify_type`；`resultCode=10000` 为成功。
+- `GetVisualValidateResult(BytedToken, ProjectName)` 返回认证创建的 `LivenessFace` 素材组 `GroupId`。
+- `CreateAsset` 官方字段为 `GroupId`、`URL`、`AssetType`、`Name`、`ProjectName`，没有 `IsRealPerson`。
+
+Video Claw 声称 1:1 映射，因此二期复用现有回调逻辑，不做站点分支；仅在 `resultCode` 缺失时改为查询 `GetVisualValidateResult` 兜底。`lng` 继续追加。上线前必须用一次真实 H5 会话验证回调参数确实透传。
+
+视频/音频素材上传仍留到二期。
 
 ## 5. 错误处理
 
@@ -166,7 +173,9 @@ description: 在现有方舟素材库实现上增加 videoclaw 站点，复用�
 1. `/api/v3` 视频请求未声明 `ProjectName` 字段（允许 additionalProperties）。若供应商按 API Key 默认项目解析 `asset://`，而配置的 `ProjectName` 不是 `default`，引用会失败。缓解：默认固定 `default`，实测后再放开。
 2. `Accept` 头处理需要在 httptest 中确认；如果供应商接受额外签名头，可以简化为保留。
 3. 素材审核状态字段 `Moderation` / `Error` 是否与官方一致，只影响状态展示，不影响 ID 链路。
-4. 控制台暂未提供真人认证入口，二期必须用真实手机完成一次 H5 回调验证。
+4. Video Claw 文档没有重复回调参数；官方契约已确认，二期需用一次真实 H5 会话验证其映射是否原样透传 `resultCode` / `bytedToken`。若回调缺失 `resultCode`，按 4.6 的兜底分支处理。
+5. 官方 `CreateAsset` 没有 `IsRealPerson` 字段；不要按第三方文档新增该参数。
+6. 控制台暂未提供真人认证入口，二期必须用真实手机完成一次 H5 回调验证。
 
 ## 8. 改动文件
 
