@@ -5,6 +5,26 @@ description: 当前项目已实现功能的手工验证清单与未确认边界
 
 # 待测试
 
+## 海外版真人素材库（橙幻-火山方舟-海外版）
+
+- 已实现：独立网关 `https://newapi.wantrace.com`、Bearer API Key（服务端加密保存）和渠道选择；Schema 95 新增 `wantrace_asset_groups`、`wantrace_assets`、`wantrace_verifications`，与国内方舟 AK/SK 素材库完全隔离。
+- 已实现：用户端「方舟素材库」只显示一个素材库，不暴露国内版 / 海外版切换；后台开启一边会自动关闭另一边，历史数据两边都开启时优先海外版；海外版支持真人 H5 认证、素材组、图片上传、状态轮询、`asset_uri` 展示和加入素材库。管理端「方舟素材库 - 海外版」支持读取渠道、测试连接、开放开关、组数上限与授权天数。
+- 已实现：视频渠道 Base URL 为 `newapi.wantrace.com` 时，后端跳过 AK/SK 同步，只校验 `asset://` 属于当前用户且已通过；前端生成时优先使用素材库的 `wantraceAssetUri`。
+- [ ] 正式站配置 Key 与渠道后，用真实手机完成 H5 真人认证，确认认证状态轮询、素材组创建、授权到期时间。
+- [ ] 上传真人图片，确认 `Processing → Active`、`asset_uri` 返回、加入素材库后在画布用海外版 Seedance 模型生成，并抓上游请求确认发送的是 `asset_uri`。
+- [ ] 验证未认证用户、他人素材 URI、过期组和 `Uncertain` 状态被拒绝或明确提示。
+- [ ] 本轮未进行真实支付、未验证视频模型计费；海外版虚拟素材组、视频/音频素材和删除/改名不在本期范围。
+
+## 服务商素材库：Video Claw（open.feeling.ltd）
+
+- 已实现：方舟素材库设置新增 `videoclaw` 站点，素材接口固定 `https://api.wantrace.com/api/v1/private/sd2/assets`（`open.feeling.ltd` 是厂商控制台，不作为接口域名），Region 固定 `cn-beijing`，ProjectName 默认 `default`；AK/SK 需在厂商控制台「凭证管理 → AK/SK 凭证」单独签发，不复用 Bearer API Key。
+- 已实现：可信素材绑定增加 `site` 维度（Schema 94），同一资源可分别缓存不同供应商的素材 ID，切换站点后不复用上一家的 `asset://`。
+- 已实现：视频渠道 Base URL 识别供应商；与素材站点不一致时跳过自动同步并保留公网参考 URL；无法识别的自定义代理保持原行为。
+- [x] 管理员签发 AK/SK 后在后台选橙幻保存，确认控制面提示、Region/ProjectName 只读和凭据校验。已验证：保存成功，接口域名 `api.wantrace.com`。
+- [x] 上传一张参考图并用 Seedance 2.0/2.5 生成，抓上游请求确认参考图为 `asset://`；切换同供应商另一模型复用同一 ID。已验证：02:30 的橙幻任务两张参考图均为 `asset://asset-...`，上游 200；绑定表两条 `site=videoclaw` 记录均为 active。
+- [x] 切到官方方舟渠道生成，确认参考图回退为公网 URL，不出现另一家的 `asset://`。已验证：02:44 的火山引擎任务保留 TOS 公网 URL。
+- [ ] 真人认证二期回调容错已实现：`resultCode=10000` 或缺失时继续查询 `GetVisualValidateResult`；`resultCode` 非 10000、或缺失但 `algorithmBaseRespCode` 非 0 时判失败退款。待正式站配置公网 HTTPS 回调后，用真实手机验证认证、`LivenessFace` 建组、真人素材上传和生成时 `asset://`。
+
 ## 合并复审：电商外部钱包与 Claude 思考预算
 
 - 已修复：电商 Agent 以独立 Run 校验预扣资格，结束时冻结成功页数并记录外部结算或退款意图；取消、失败、部分成功及响应丢失均沿用原账单快照恢复。报价、完成事件与历史回放使用账单金额。

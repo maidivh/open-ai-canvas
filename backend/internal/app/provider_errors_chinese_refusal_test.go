@@ -28,3 +28,15 @@ func TestProviderChineseSafetyRefusalUsesModerationMessage(t *testing.T) {
 		t.Errorf("普通参数错误不应归为安全审核：%q", got)
 	}
 }
+
+func TestRealPersonCertificationHintOnlyForSeedance(t *testing.T) {
+	body := `{"error":{"code":"InputImageSensitiveContentDetected.PrivacyInformation","message":"may contain real person"}}`
+	seedance := providerHTTPError{StatusCode: 400, Body: body, Model: "dreamina-seedance-2-0-mini-260615"}.Error()
+	if !strings.Contains(seedance, "设置 → 方舟素材库") {
+		t.Fatalf("seedance error = %q, want certification hint", seedance)
+	}
+	other := providerHTTPError{StatusCode: 400, Body: body, Model: "gpt-image-1"}.Error()
+	if strings.Contains(other, "设置 → 方舟素材库") {
+		t.Fatalf("non-seedance error = %q, must not include certification hint", other)
+	}
+}

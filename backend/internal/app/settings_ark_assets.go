@@ -17,6 +17,14 @@ const arkPrivateAssetSettingKey = "ark_private_assets"
 const (
 	arkSiteVolcengine = "volcengine"
 	arkSiteBytePlus   = "byteplus"
+	arkSiteVideoClaw  = "videoclaw"
+)
+
+// Video Claw 的素材接口固定使用火山兼容签名，Region 也固定为 cn-beijing。
+// open.feeling.ltd 是厂商控制台，实际接口域名是 api.wantrace.com。
+const (
+	arkSiteVideoClawRegion = "cn-beijing"
+	arkVideoClawAPIBase    = "https://api.wantrace.com"
 )
 
 const (
@@ -168,6 +176,12 @@ func (s *Service) UpdateArkPrivateAssetSetting(actor *model.User, req ArkPrivate
 	if err := s.saveArkPrivateAssetSetting(setting, next); err != nil {
 		return nil, err
 	}
+	// 国内版与海外版是两套独立素材库；用户端只保留一个入口，避免同一个人重复认证后看到两个库。
+	if next.RealEnabled || next.VirtualEnabled {
+		if err := s.disableWantraceLibraryForArkPortrait(actor); err != nil {
+			return nil, err
+		}
+	}
 	if err := s.appendAdminAudit(actor, "ark_private_assets.update", "system_setting", arkPrivateAssetSettingKey, "更新方舟素材库配置", map[string]any{
 		"enabled": next.Enabled, "realEnabled": next.RealEnabled, "virtualEnabled": next.VirtualEnabled,
 		"billingEnabled": next.BillingEnabled, "realGroupPriceMicrocredits": next.RealGroupPriceMicrocredits, "virtualGroupPriceMicrocredits": next.VirtualGroupPriceMicrocredits,
@@ -265,8 +279,15 @@ func arkPrivateAssetSettingFromRequest(req ArkPrivateAssetSettingRequest, curren
 		next.RealAuthorizationDays = current.RealAuthorizationDays
 	}
 	next = normalizeArkPrivateAssetSetting(next)
-	if next.Site != arkSiteVolcengine && next.Site != arkSiteBytePlus {
-		return next, BadAuthRequest("方舟站点只支持 volcengine（火山引擎）或 byteplus（BytePlus 海外站）")
+	switch next.Site {
+	case arkSiteVolcengine, arkSiteBytePlus:
+	case arkSiteVideoClaw:
+		next.Region = arkSiteVideoClawRegion
+	default:
+		return next, BadAuthRequest("方舟站点只支持 volcengine（火山引擎）、byteplus（BytePlus 海外站）或 videoclaw（橙幻）")
+	}
+	if next.Site == arkSiteVideoClaw {
+		next.Region = arkSiteVideoClawRegion
 	}
 	if next.CallbackBaseURL != "" {
 		if err := validatePaymentPublicBaseURL(next.CallbackBaseURL); err != nil {
@@ -274,7 +295,7 @@ func arkPrivateAssetSettingFromRequest(req ArkPrivateAssetSettingRequest, curren
 		}
 	}
 	if next.Region != "" {
-		if _, err := arkPrivateAssetControlPlaneURL(next.Site, next.Region); err != nil {
+		if _, err := arkPrivateAssetControlPlaneEndpoint(next.Site, next.Region); err != nil {
 			return next, BadAuthRequest(err.Error())
 		}
 	}
@@ -305,6 +326,12 @@ func normalizeArkPrivateAssetSetting(value arkPrivateAssetSettingValue) arkPriva
 	value.Site = strings.ToLower(strings.TrimSpace(value.Site))
 	if value.Site == "" {
 		value.Site = arkSiteVolcengine
+	}
+	if value.Site == arkSiteVideoClaw {
+		value.Region = arkSiteVideoClawRegion
+		if value.ProjectName == "" {
+			value.ProjectName = "default"
+		}
 	}
 	value.CallbackBaseURL = strings.TrimRight(strings.TrimSpace(value.CallbackBaseURL), "/")
 	value.Region = strings.ToLower(strings.TrimSpace(value.Region))

@@ -402,6 +402,17 @@
     font-size: var(--fs-caption);
     line-height: 1.6;
 }
+.ark-session-remaining {
+    color: var(--user-ink);
+    font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-size: var(--fs-title);
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    line-height: 1.2;
+}
+.ark-session-remaining.is-warning {
+    color: var(--status-warning);
+}
 .ark-session-copy strong {
     color: var(--user-ink);
     font-size: var(--fs-title);

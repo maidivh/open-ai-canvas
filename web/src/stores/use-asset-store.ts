@@ -72,6 +72,8 @@ type AssetBase<T extends AssetKind> = {
     note?: string;
     /** 方舟素材 ID：认证通过时由服务端写入，也可手填方舟预置虚拟人像等外部 ID。 */
     arkAssetId?: string;
+    /** 海外版素材 URI：只有 Active 素材才有值，海外版视频渠道优先改写为 asset:// 引用。 */
+    wantraceAssetUri?: string;
     arkCertification?: ArkCertification;
     createdAt: string;
     updatedAt: string;

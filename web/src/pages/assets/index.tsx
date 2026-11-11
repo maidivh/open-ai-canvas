@@ -361,6 +361,7 @@ export default function AssetsPage() {
         const certification = editingAsset?.arkCertification;
         const previousStorageKey = editingAsset?.kind === "image" ? editingAsset.data.storageKey : undefined;
         const certificationLost = Boolean(certification && values.kind === "image" && imageData && imageData.storageKey !== previousStorageKey);
+        const wantraceLost = Boolean(editingAsset?.wantraceAssetUri && values.kind === "image" && imageData && imageData.storageKey !== previousStorageKey);
         const keptCertification = certification && !certificationLost ? certification : undefined;
         const restoredCategory = normalizeAssetCategory(certification?.previousCategory, defaultAssetCategoryForKind(values.kind));
         const base = {
@@ -375,6 +376,7 @@ export default function AssetsPage() {
             note: values.note?.trim(),
             arkAssetId: keptCertification ? editingAsset?.arkAssetId : certificationLost ? undefined : values.arkAssetId?.trim() || undefined,
             arkCertification: keptCertification,
+            wantraceAssetUri: wantraceLost ? undefined : editingAsset?.wantraceAssetUri,
             metadata: editingAsset?.metadata || { source: "manual" },
         };
 
@@ -509,6 +511,7 @@ export default function AssetsPage() {
                     payload.category = restored === ARK_ASSET_CATEGORY ? defaultAssetCategoryForKind(asset.kind) : restored;
                     if (asset.arkCertification) delete payload.arkAssetId;
                     delete payload.arkCertification;
+                    delete payload.wantraceAssetUri;
                 }
                 addAsset(payload as Parameters<typeof addAsset>[0]);
             });

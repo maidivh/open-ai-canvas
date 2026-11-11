@@ -48,7 +48,15 @@ func withoutProviderAnalytics(ctx context.Context) context.Context {
 
 func (s *Service) prepareArkPrivateAssetReferences(ctx context.Context, userID string, input *canvasGenerationInput) error {
 	// 可信素材 asset:// 仅方舟视频协议支持；Agent Plan Seedream 等图片渠道不能上传或改写。
-	if input == nil || input.Mode != "video" || !isArkPrivateAssetVideoConfig(input.Config) || !parseBool(input.Config.ArkPrivateAssetUpload, true) {
+	if input == nil || input.Mode != "video" {
+		return nil
+	}
+	// 海外版走独立 Bearer 素材库，不参与 AK/SK 素材同步；只校验引用是否属于当前用户。
+	// 该检查不依赖 ArkPrivateAssetUpload，避免关闭开关后把任意 asset:// 透传给海外网关。
+	if isWantraceAssetChannelBaseURL(input.Config.BaseURL) {
+		return s.prepareWantraceAssetReferences(userID, input)
+	}
+	if !isArkPrivateAssetVideoConfig(input.Config) || !parseBool(input.Config.ArkPrivateAssetUpload, true) {
 		return nil
 	}
 	hasOwnedReference := false
@@ -64,6 +72,11 @@ func (s *Service) prepareArkPrivateAssetReferences(ctx context.Context, userID s
 	settingRecord, setting, err := s.readArkPrivateAssetSetting()
 	if err != nil {
 		return err
+	}
+	// 素材 ID 按供应商隔离：渠道明确属于其他供应商时不再上传到当前素材库，
+	// 本地参考图保留公网 URL；已带 asset:// 的引用来源无法归属，按设计原样透传，由上游判定。
+	if provider := arkAssetProviderFromBaseURL(input.Config.BaseURL); provider != "" && provider != setting.Site {
+		return nil
 	}
 	automaticSyncEnabled, err := arkPrivateAssetAutomaticSyncEnabled(setting)
 	if err != nil {
@@ -174,7 +187,7 @@ func (s *Service) SyncResourceToArkPrivateAsset(ctx context.Context, actor *mode
 }
 
 func (s *Service) ensureArkPrivateAsset(ctx context.Context, userID string, resource *model.Resource, settingRecord *model.SystemSetting, setting *arkPrivateAssetSettingValue) (string, error) {
-	binding, err := s.repo.ArkPrivateAssetBinding(resource.ID, setting.ProjectName)
+	binding, err := s.repo.ArkPrivateAssetBinding(resource.ID, setting.ProjectName, setting.Site)
 	if err == nil {
 		if shouldResumeArkPrivateAssetPolling(binding) {
 			// 素材已创建成功，只是旧版 GetAsset 参数错误导致轮询失败；恢复轮询，
@@ -206,6 +219,7 @@ func (s *Service) ensureArkPrivateAsset(ctx context.Context, userID string, reso
 			UserID:      userID,
 			ResourceID:  resource.ID,
 			ProjectName: setting.ProjectName,
+			Site:        setting.Site,
 			Status:      arkPrivateAssetStatusNew,
 		}
 		created, err := s.repo.CreateArkPrivateAssetBinding(binding)
@@ -213,7 +227,7 @@ func (s *Service) ensureArkPrivateAsset(ctx context.Context, userID string, reso
 			return "", err
 		}
 		if !created {
-			binding, err = s.repo.ArkPrivateAssetBinding(resource.ID, setting.ProjectName)
+			binding, err = s.repo.ArkPrivateAssetBinding(resource.ID, setting.ProjectName, setting.Site)
 			if err != nil {
 				return "", err
 			}
@@ -350,7 +364,7 @@ func (s *Service) waitForArkPrivateAsset(ctx context.Context, binding *model.Ark
 		if err := sleepContext(ctx, 2*time.Second); err != nil {
 			return "", err
 		}
-		latest, err := s.repo.ArkPrivateAssetBinding(binding.ResourceID, binding.ProjectName)
+		latest, err := s.repo.ArkPrivateAssetBinding(binding.ResourceID, binding.ProjectName, binding.Site)
 		if err != nil {
 			return "", err
 		}
@@ -376,11 +390,11 @@ func callArkPrivateAssetAPI(ctx context.Context, setting arkPrivateAssetSettingV
 	if err != nil {
 		return nil, err
 	}
-	baseURL, err := arkPrivateAssetControlPlaneURL(setting.Site, setting.Region)
+	endpointURL, err := arkPrivateAssetControlPlaneEndpoint(setting.Site, setting.Region)
 	if err != nil {
 		return nil, err
 	}
-	endpoint, err := url.Parse(baseURL)
+	endpoint, err := url.Parse(endpointURL)
 	if err != nil {
 		return nil, err
 	}
@@ -393,15 +407,23 @@ func callArkPrivateAssetAPI(ctx context.Context, setting arkPrivateAssetSettingV
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
+	if setting.Site != arkSiteVideoClaw {
+		req.Header.Set("Accept", "application/json")
+	}
 	credentials := base.Credentials{
 		AccessKeyID:     setting.AccessKeyID,
 		SecretAccessKey: setting.AccessKeySecret,
 		Region:          setting.Region,
 		Service:         "ark",
 	}
+	signed := credentials.Sign(req)
+	if setting.Site == arkSiteVideoClaw {
+		// Video Claw 的签名范围固定为 content-type;host;x-content-sha256;x-date，
+		// 额外请求头在签名后再补，避免 SignedHeaders 与文档不一致。
+		signed.Header.Set("Accept", "application/json")
+	}
 	var response map[string]interface{}
-	if err := doJSON(credentials.Sign(req), &response); err != nil {
+	if err := doJSON(signed, &response); err != nil {
 		// doJSON 对非 2xx 响应只按状态码生成通用提示（401/403 会被说成“模型服务鉴权失败”），
 		// 方舟把真实原因（如 SubscriptionRequired）放在响应体的 ResponseMetadata.Error 里，必须还原。
 		var httpErr providerHTTPError
@@ -441,15 +463,22 @@ func arkPrivateAssetUpstreamDetail(response map[string]interface{}) string {
 	return detail
 }
 
-// arkPrivateAssetControlPlaneURL 按站点和 Region 推导方舟控制面（OpenAPI）地址：
+// arkPrivateAssetControlPlaneEndpoint 按站点和 Region 推导素材库控制面地址：
+// 火山引擎为 ark.<region>.volcengineapi.com，BytePlus 海外站为 ark.<region>.byteplusapi.com，
+// arkPrivateAssetControlPlaneEndpoint 按站点和 Region 推导素材库控制面地址：
 // 火山引擎为 ark.<region>.volcengineapi.com，BytePlus 海外站为 ark.<region>.byteplusapi.com。
-// 两个站点使用相同的 HMAC-SHA256 签名与 2024-01-01 接口版本。
-func arkPrivateAssetControlPlaneURL(site, region string) (string, error) {
+// Video Claw 的控制台是 open.feeling.ltd，素材接口域名是 api.wantrace.com。
+// 各站点使用相同的 HMAC-SHA256 签名与 2024-01-01 接口版本。
+func arkPrivateAssetControlPlaneEndpoint(site, region string) (string, error) {
 	if override := strings.TrimSpace(arkPrivateAssetAPIBaseURLOverride); override != "" {
 		return override, nil
 	}
+	site = strings.ToLower(strings.TrimSpace(site))
+	if site == arkSiteVideoClaw {
+		return arkVideoClawAPIBase + "/api/v1/private/sd2/assets", nil
+	}
 	host := "volcengineapi.com"
-	switch strings.ToLower(strings.TrimSpace(site)) {
+	switch site {
 	case "", arkSiteVolcengine:
 	case arkSiteBytePlus:
 		host = "byteplusapi.com"
@@ -466,6 +495,38 @@ func arkPrivateAssetControlPlaneURL(site, region string) (string, error) {
 		}
 	}
 	return "https://ark." + region + "." + host, nil
+}
+
+// arkAssetProviderFromBaseURL 从视频渠道的 Base URL 识别素材供应商。
+// open.feeling.ltd 与 api.wantrace.com 指向同一个 Video Claw 服务，识别为同一站点。
+// newapi.wantrace.com 是独立的海外版网关，不进入这里的 AK/SK 站点判断。
+// 无法识别的代理返回空串，调用方保持原有行为，避免影响既有自定义网关。
+func isWantraceAssetChannelBaseURL(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	return host == "newapi.wantrace.com" || strings.HasSuffix(host, ".newapi.wantrace.com")
+}
+
+func arkAssetProviderFromBaseURL(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return ""
+	}
+	host := strings.ToLower(parsed.Hostname())
+	switch {
+	case host == "open.feeling.ltd", strings.HasSuffix(host, ".open.feeling.ltd"),
+		host == "api.wantrace.com", strings.HasSuffix(host, ".wantrace.com"):
+		return arkSiteVideoClaw
+	case strings.HasSuffix(host, ".volcengineapi.com"), strings.HasSuffix(host, ".volces.com"):
+		return arkSiteVolcengine
+	case strings.HasSuffix(host, ".byteplusapi.com"), strings.HasSuffix(host, ".bytepluses.com"):
+		return arkSiteBytePlus
+	default:
+		return ""
+	}
 }
 
 func arkPrivateAssetResponseField(response map[string]interface{}, keys ...string) string {

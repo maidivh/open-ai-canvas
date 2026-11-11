@@ -167,6 +167,8 @@ export function creationAttachmentFromAsset(asset: ImageAsset): CreationAttachme
         width: asset.data.width,
         height: asset.data.height,
         previewUrl: url,
+        ...(asset.arkAssetId ? { arkAssetId: asset.arkAssetId } : {}),
+        ...(asset.wantraceAssetUri ? { wantraceAssetUri: asset.wantraceAssetUri } : {}),
     };
 }
 

@@ -14,9 +14,11 @@ import { useArkLibraryReconcile } from "@/hooks/use-ark-library-reconcile";
 import { ARK_GROUP_KINDS, arkGroupLimit, arkGroupPrice, arkGroupQuotaLeft, arkKindEnabled, arkLibraryProgressMap, arkReviewRequired, formatArkDate, formatArkTime } from "@/lib/ark-assets";
 import { cn } from "@/lib/utils";
 import { arkPortraitOverviewQueryKey, getArkPortraitOverview, type ArkGroupKind, type ArkPortraitGroup, type ArkPortraitSession } from "@/services/api/ark-portraits";
+import { getWantraceOverview, wantraceOverviewQueryKey } from "@/services/api/wantrace-assets";
 
 import { ArkGroupDetail } from "./ark-group-detail";
 import { ArkRealGroupComposer, ArkVirtualGroupComposer } from "./ark-group-create";
+import { WantraceAssetsPane } from "./wantrace-assets-pane";
 import "./ark-assets-pane.css";
 
 type ScopeFilter = "owned" | "granted";
@@ -29,8 +31,33 @@ const KIND_ICONS: Record<ArkGroupKind, ReactNode> = {
     ip: <BadgeCheck aria-hidden />,
 };
 
-/** 设置页「方舟素材库」：按真人 / 虚拟 / 版权 IP 管理素材组，真人认证在页面内原位完成，不使用抽屉。 */
+/** 「方舟素材库」入口：国内版沿用平台方舟账号；海外版是独立的橙幻-火山方舟-海外版网关。 */
 export function ArkAssetsPane() {
+    const { t } = useTranslation();
+    // 供应商由后台二选一决定，用户端不暴露切换。后台配置互斥；历史数据两边都开时优先海外版。
+    const domesticQuery = useQuery({
+        queryKey: arkPortraitOverviewQueryKey,
+        queryFn: ({ signal }) => getArkPortraitOverview(signal),
+    });
+    const overseasQuery = useQuery({
+        queryKey: wantraceOverviewQueryKey,
+        queryFn: ({ signal }) => getWantraceOverview(signal),
+    });
+    if (domesticQuery.isPending || overseasQuery.isPending) {
+        return (
+            <div className="ark-pane">
+                <div className="ark-pane-loading" role="status">
+                    {t("library.ark.loading")}
+                </div>
+            </div>
+        );
+    }
+    const overseasActive = Boolean(overseasQuery.data?.enabled && overseasQuery.data.realEnabled);
+    return <div>{overseasActive ? <WantraceAssetsPane /> : <DomesticArkAssetsPane />}</div>;
+}
+
+/** 设置页「方舟素材库」：按真人 / 虚拟 / 版权 IP 管理素材组，真人认证在页面内原位完成，不使用抽屉。 */
+function DomesticArkAssetsPane() {
     const { t } = useTranslation();
     const queryClient = useQueryClient();
     const [kind, setKind] = useState<ArkGroupKind>("real");

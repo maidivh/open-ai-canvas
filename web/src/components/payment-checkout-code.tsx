@@ -9,18 +9,27 @@ const QR_SIZE = 208;
 const QR_DARK = "#111111";
 const QR_LIGHT = "#ffffff";
 
-export function PaymentCheckoutCode({ value }: { value: string }) {
+type PaymentCheckoutCodeProps = {
+    value: string;
+    /** 认证链接通常很长，调用方可以放大二维码并降级纠错，避免微信无法识别。 */
+    size?: number;
+    errorLevel?: "L" | "M" | "Q" | "H";
+    marginSize?: number;
+};
+
+export function PaymentCheckoutCode({ value, size = QR_SIZE, errorLevel = "M", marginSize = 0 }: PaymentCheckoutCodeProps) {
     const { t } = useTranslation();
+    const className = size > QR_SIZE ? "payment-checkout-code is-large" : "payment-checkout-code";
     if (isPaymentQrImageURL(value)) {
         return (
-            <div className="payment-checkout-code">
-                <img src={value} alt={t("account.payment.qrAlt")} width={QR_SIZE} height={QR_SIZE} referrerPolicy="no-referrer" />
+            <div className={className}>
+                <img src={value} alt={t("account.payment.qrAlt")} width={size} height={size} referrerPolicy="no-referrer" />
             </div>
         );
     }
     return (
-        <div className="payment-checkout-code">
-            <QRCode value={value} size={QR_SIZE} bordered={false} color={QR_DARK} bgColor={QR_LIGHT} />
+        <div className={className}>
+            <QRCode value={value} size={size} bordered={false} errorLevel={errorLevel} marginSize={marginSize} color={QR_DARK} bgColor={QR_LIGHT} />
         </div>
     );
 }

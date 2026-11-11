@@ -23,6 +23,7 @@ import { FeedbackInboxPane } from "./feedback-inbox-pane";
 import { ArkAssetsPane } from "./ark-assets-pane";
 import { PreferencesPane } from "./preferences-pane";
 import { arkPortraitOverviewQueryKey, getArkPortraitOverview } from "@/services/api/ark-portraits";
+import { getWantraceOverview, wantraceOverviewQueryKey } from "@/services/api/wantrace-assets";
 import "./settings-page.css";
 
 type ConfigSectionKey = "profile" | "channels" | "models" | "runninghub" | "preferences" | "prompts" | "agent-memory" | "storage" | "ark-assets" | "diagnostics" | "feedbacks";
@@ -72,9 +73,12 @@ export default function SettingsPage() {
     const userChannels = config.channels.filter((channel) => channel.scope !== "system");
     const protocolCatalog = useUserProtocolCatalog(customChannelsEnabled);
     const secretKeyProtocols = useMemo(() => secretKeyProtocolIds(protocolCatalog), [protocolCatalog]);
-    // 方舟素材库只在管理员开放后显示；读取中或读取失败时，仅在链接直达该分类时保留入口，由分类内展示加载与重试。
+    // 方舟素材库只在管理员开放国内版或海外版后显示；读取中或读取失败时，仅在链接直达该分类时保留入口。
     const arkOverviewQuery = useQuery({ queryKey: arkPortraitOverviewQueryKey, queryFn: ({ signal }) => getArkPortraitOverview(signal), enabled: Boolean(userId), staleTime: 60_000 });
-    const arkAssetsVisible = arkOverviewQuery.data ? arkOverviewQuery.data.enabled : requestedSection === "ark-assets";
+    const wantraceOverviewQuery = useQuery({ queryKey: wantraceOverviewQueryKey, queryFn: ({ signal }) => getWantraceOverview(signal), enabled: Boolean(userId), staleTime: 60_000 });
+    const wantraceAssetsVisible = wantraceOverviewQuery.data?.enabled === true && wantraceOverviewQuery.data.realEnabled === true;
+    const assetOverviewSettled = !arkOverviewQuery.isPending && !wantraceOverviewQuery.isPending;
+    const arkAssetsVisible = assetOverviewSettled ? arkOverviewQuery.data?.enabled === true || wantraceAssetsVisible : requestedSection === "ark-assets";
     const visibleConfigSections = useMemo(() => (customChannelsEnabled ? configSections : configSections.filter((section) => section.key !== "channels"))
         .filter((section) => section.key !== "runninghub" || runningHubPluginEnabled)
         .filter((section) => section.key !== "ark-assets" || arkAssetsVisible), [arkAssetsVisible, customChannelsEnabled, runningHubPluginEnabled]);

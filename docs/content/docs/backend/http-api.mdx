@@ -644,7 +644,9 @@ Skills 的 `tool_completed` / `tool_failed` 事件附带 `skillId`、`skillName`
 
 所有素材组都建在平台配置的方舟账号下，分三类：`real` 真人人像（本人 H5 活体认证生成）、`virtual` 虚拟人像（直接建组）、`ip` 版权 IP（只能由管理员创建并授权）。`scope=user` 为用户自建、只属于本人；`scope=platform` 为管理员创建，按授权（全部用户或指定用户）只读使用。
 
-管理员配置 `GET/PATCH /api/admin/settings/ark-private-assets`：`site`（`volcengine` / `byteplus`，决定控制面 `ark.<region>.volcengineapi.com` 或 `ark.<region>.byteplusapi.com`）、`enabled`（可信素材自动同步，与素材组相互独立）、`realEnabled` / `virtualEnabled`（开放用户自建真人 / 虚拟素材组）、`realGroupLimit` / `virtualGroupLimit`（每人上限 1–200，真人包含认证中的会话）、`billingEnabled` 与 `realGroupPriceMicrocredits` / `virtualGroupPriceMicrocredits`（按组一次性收费，0–10¹² 微积分）、`realReviewRequired` / `virtualReviewRequired`（用户上传先经平台审核）、`realAuthorizationDays`（真人授权有效期 1–3650 天，从认证完成起算）和 `callbackBaseUrl`（站点公网根地址，空时使用 `CANVAS_PUBLIC_BASE_URL`）。上限与天数传 0 表示保持原值。保存写入管理员审计 `ark_private_assets.update`。更换站点、Region、ProjectName 或 AccessKey 会使已有素材组标记为不可用（`available=false`）。
+管理员配置 `GET/PATCH /api/admin/settings/ark-private-assets`：`site`（`volcengine` / `byteplus` / `videoclaw`）、`enabled`（可信素材自动同步，与素材组相互独立）、`realEnabled` / `virtualEnabled`（开放用户自建真人 / 虚拟素材组）、`realGroupLimit` / `virtualGroupLimit`（每人上限 1–200，真人包含认证中的会话）、`billingEnabled` 与 `realGroupPriceMicrocredits` / `virtualGroupPriceMicrocredits`（按组一次性收费，0–10¹² 微积分）、`realReviewRequired` / `virtualReviewRequired`（用户上传先经平台审核）、`realAuthorizationDays`（真人授权有效期 1–3650 天，从认证完成起算）和 `callbackBaseUrl`（站点公网根地址，空时使用 `CANVAS_PUBLIC_BASE_URL`）。上限与天数传 0 表示保持原值。保存写入管理员审计 `ark_private_assets.update`。更换站点、Region、ProjectName 或 AccessKey 会使已有素材组标记为不可用（`available=false`）。
+
+`volcengine` / `byteplus` 的控制面分别为 `ark.<region>.volcengineapi.com` / `ark.<region>.byteplusapi.com`，Region 由管理员填写。`videoclaw` 的素材接口固定为 `https://api.wantrace.com/api/v1/private/sd2/assets`（`open.feeling.ltd` 是厂商控制台，不是接口域名），Region 固定 `cn-beijing`，ProjectName 默认 `default`；AK/SK 在厂商控制台「凭证管理 → AK/SK 凭证」签发（不复用 Bearer API Key）。素材库域名必须与视频渠道使用同一个接口域名，否则 `asset://` 可能落在不同租户。可信素材绑定按站点隔离；视频渠道 Base URL 明确属于其他供应商时，自动同步跳过并保留公网参考 URL，避免把错误的 `asset://` 发给上游。无法识别的自定义代理保持原有行为。
 
 收费走 `billing_orders`（场景 `ark_asset_group`）：真人在发起认证时冻结、认证成功后扣除，失败、过期或取消退回；虚拟在 `CreateAssetGroup` 成功后扣除，失败退回。平台积分功能关闭或平台素材组不收费，删除素材组不退款。后台 worker 每 30 秒结束过期会话、退回滞留冻结并刷新方舟审核中的素材。
 
@@ -667,6 +669,8 @@ Skills 的 `tool_completed` / `tool_failed` 事件附带 `skillId`、`skillName`
 | `POST /api/ark-portraits/assets/:id/library` | 把已通过的图片加入素材库「方舟认证」分类，返回 `{ assetId }`；平台素材复制成本人资源 |
 | `GET /api/ark-portraits/assets/:id/file` | 素材预览；上传者、被授权用户与管理员可访问 |
 
+回调带 `resultCode=10000` 或只带 `bytedToken` 时都会继续查询 `GetVisualValidateResult` 换取素材组；`resultCode` 非 10000、或缺失但 `algorithmBaseRespCode` 非 0 时判失败并退回冻结积分。
+
 自建组的图片通过方舟审核后，服务端直接写入素材库：从素材库提交的图片原地移入 `ark` 分类（`previousCategory` 记录原分类），组内直接上传的图片新建素材 `ark-<素材ID>`。素材 payload 带 `arkAssetId` 与 `arkCertification`（`kind`、`scope`、`portraitAssetId`、`groupId`、`groupName`、`arkGroupId`、`certifiedAt`、`expiresAt`、`previousCategory`）。`ark` 分类只能由服务端写入，`PUT` 素材时客户端不能把其他分类改成 `ark`。
 
 管理员接口（service 校验管理员权限）：
@@ -684,6 +688,21 @@ Skills 的 `tool_completed` / `tool_failed` 事件附带 `skillId`、`skillName`
 | `POST /api/admin/ark-portraits/reviews/reject` | `{ ids, reason }` 驳回，原因展示给用户 |
 
 生成任务的参考图、视频和音频中出现 `asset://<id>` 时：属于他人自建组、未授权的平台组或已过期真人组的 ID 返回 403；未登记的 ID（方舟公共数字人等）不受限制。
+
+## 海外版真人素材库（橙幻-火山方舟-海外版）
+
+海外版使用独立网关 `https://newapi.wantrace.com` 和 Bearer API Key，与国内方舟 AK/SK 素材库完全隔离。国内版与海外版的用户入口互斥：开启海外版真人素材组会自动关闭国内版 `realEnabled` / `virtualEnabled`，开启国内版真人或虚拟素材组会自动关闭海外版入口；用户端只显示一个素材库。管理员在 `GET/PATCH /api/admin/settings/wantrace-assets` 配置 `enabled`、`realEnabled`、加密保存的 `apiKey`、`channelId`（通过 `POST /api/admin/settings/wantrace-assets/channels` 读取当前 Key 可访问的渠道）、`realGroupLimit`（1–200）和 `realAuthorizationDays`（1–3650）。`POST /api/admin/settings/wantrace-assets/test` 用已保存配置重新读取渠道，验证 Key 与渠道权限。API Key 不进入 URL、日志或响应，`GET` 只返回 `hasApiKey`。
+
+| 接口 | 说明 |
+| --- | --- |
+| `GET /api/wantrace-assets` | 返回 `enabled`、`realEnabled`、渠道与限制配置、当前用户的真人素材组、素材和处理中的认证。素材状态为 `Processing` / `Active` / `Failed` / `Uncertain`；只有 `Active` 带 `assetUri`。未完成认证只在归属用户读取时返回加密保存的 `h5Link` |
+| `POST /api/wantrace-assets/verifications` | `{ name }` 向海外版网关发起真人 H5 认证，返回一次性认证链接（30 分钟有效）和本地认证 ID；组数上限包含处理中的认证 |
+| `POST /api/wantrace-assets/verifications/:id/check` | 主动查询认证结果。`verified` 时创建真人素材组并按管理员配置计算授权到期时间；`failed` / `expired` 写回原因 |
+| `POST /api/wantrace-assets/groups/:id/assets` | `{ resourceId, name }` 提交本人已上传的图片（≤30MB）。海外版真人组一期只支持 Image；返回素材状态，前端轮询刷新 |
+| `POST /api/wantrace-assets/assets/:id/refresh` | 查询上游素材状态并回写 `status` / `assetUri` / `error`；`Uncertain` 会保留明确提示 |
+| `POST /api/wantrace-assets/assets/:id/library` | 把已通过的素材加入素材库「方舟认证」分类，写入 `wantraceAssetUri` 和认证快照 |
+
+生成任务的视频渠道 Base URL 是 `newapi.wantrace.com` 时，后端跳过 AK/SK 素材同步，只校验参考图中的 `asset://` 是否属于当前用户且状态为 `Active`；前端优先把素材库记录的 `wantraceAssetUri` 原样传给上游。其他渠道不会读取该字段。
 
 ## 管理员支付订单
 

@@ -505,3 +505,43 @@ func TestArkPortraitH5LanguageMapping(t *testing.T) {
 		t.Fatal("non-https h5 link must be rejected")
 	}
 }
+
+func TestArkPortraitCallbackWithoutResultCodeQueriesResult(t *testing.T) {
+	s, db, fake := arkPortraitTestService(t)
+	ctx := context.Background()
+	user := &model.User{ID: "user", Username: "user", Role: model.UserRoleUser, Status: model.UserStatusActive}
+	if _, err := s.CreateArkPortraitSession(ctx, user, "演员丁", "zh"); err != nil {
+		t.Fatal(err)
+	}
+	state := fake.state(t)
+	if got := s.HandleArkPortraitCallback(ctx, state, url.Values{"bytedToken": {"byted-token-1"}}); got != "/ark-portrait/result?status=verified" {
+		t.Fatalf("callback redirect = %q", got)
+	}
+	var session model.ArkPortraitSession
+	if err := db.Where("state = ?", state).First(&session).Error; err != nil {
+		t.Fatal(err)
+	}
+	if session.Status != arkPortraitSessionVerified {
+		t.Fatalf("session status = %q", session.Status)
+	}
+}
+
+func TestArkPortraitCallbackUsesAlgorithmCodeWhenResultCodeMissing(t *testing.T) {
+	s, db, fake := arkPortraitTestService(t)
+	ctx := context.Background()
+	user := &model.User{ID: "user", Username: "user", Role: model.UserRoleUser, Status: model.UserStatusActive}
+	if _, err := s.CreateArkPortraitSession(ctx, user, "演员戊", "zh"); err != nil {
+		t.Fatal(err)
+	}
+	state := fake.state(t)
+	if got := s.HandleArkPortraitCallback(ctx, state, url.Values{"algorithmBaseRespCode": {"210311"}}); got != "/ark-portrait/result?status=failed" {
+		t.Fatalf("callback redirect = %q", got)
+	}
+	var session model.ArkPortraitSession
+	if err := db.Where("state = ?", state).First(&session).Error; err != nil {
+		t.Fatal(err)
+	}
+	if session.Status != arkPortraitSessionFailed || session.ResultCode != "210311" {
+		t.Fatalf("session = %#v", session)
+	}
+}

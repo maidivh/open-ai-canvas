@@ -428,11 +428,16 @@ function ArkArchiveSection({ asset, progress, onCertify, onManage }: { asset: Li
                             {t("library.ark.detail.manualId")} <span className="font-mono">{asset.arkAssetId}</span>
                         </p>
                     ) : null}
+                    {asset.wantraceAssetUri ? (
+                        <p className="asset-archive-section-body">
+                            素材 URI <span className="break-all font-mono">{asset.wantraceAssetUri}</span>
+                        </p>
+                    ) : null}
                     {!progress || (!pending && !failed) ? <p className="asset-archive-section-body">{t("library.ark.detail.hint")}</p> : null}
                 </div>
             )}
             <div className="mt-3 flex flex-wrap gap-2">
-                {!certification && !pending && asset.kind === "image" ? (
+                {!certification && !pending && asset.kind === "image" && !asset.wantraceAssetUri ? (
                     <Button size="small" icon={<ShieldCheck className="size-3.5" />} onClick={() => onCertify(asset)}>
                         {t("library.ark.detail.certify")}
                     </Button>
