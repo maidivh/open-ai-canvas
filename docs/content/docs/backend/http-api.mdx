@@ -689,6 +689,21 @@ Skills 的 `tool_completed` / `tool_failed` 事件附带 `skillId`、`skillName`
 
 生成任务的参考图、视频和音频中出现 `asset://<id>` 时：属于他人自建组、未授权的平台组或已过期真人组的 ID 返回 403；未登记的 ID（方舟公共数字人等）不受限制。
 
+## 海外版真人素材库（橙幻-火山方舟-海外版）
+
+海外版使用独立网关 `https://newapi.wantrace.com` 和 Bearer API Key，与国内方舟 AK/SK 素材库完全隔离。国内版与海外版的用户入口互斥：开启海外版真人素材组会自动关闭国内版 `realEnabled` / `virtualEnabled`，开启国内版真人或虚拟素材组会自动关闭海外版入口；用户端只显示一个素材库。管理员在 `GET/PATCH /api/admin/settings/wantrace-assets` 配置 `enabled`、`realEnabled`、加密保存的 `apiKey`、`channelId`（通过 `POST /api/admin/settings/wantrace-assets/channels` 读取当前 Key 可访问的渠道）、`realGroupLimit`（1–200）和 `realAuthorizationDays`（1–3650）。`POST /api/admin/settings/wantrace-assets/test` 用已保存配置重新读取渠道，验证 Key 与渠道权限。API Key 不进入 URL、日志或响应，`GET` 只返回 `hasApiKey`。
+
+| 接口 | 说明 |
+| --- | --- |
+| `GET /api/wantrace-assets` | 返回 `enabled`、`realEnabled`、渠道与限制配置、当前用户的真人素材组、素材和处理中的认证。素材状态为 `Processing` / `Active` / `Failed` / `Uncertain`；只有 `Active` 带 `assetUri`。未完成认证只在归属用户读取时返回加密保存的 `h5Link` |
+| `POST /api/wantrace-assets/verifications` | `{ name }` 向海外版网关发起真人 H5 认证，返回一次性认证链接（30 分钟有效）和本地认证 ID；组数上限包含处理中的认证 |
+| `POST /api/wantrace-assets/verifications/:id/check` | 主动查询认证结果。`verified` 时创建真人素材组并按管理员配置计算授权到期时间；`failed` / `expired` 写回原因 |
+| `POST /api/wantrace-assets/groups/:id/assets` | `{ resourceId, name }` 提交本人已上传的图片（≤30MB）。海外版真人组一期只支持 Image；返回素材状态，前端轮询刷新 |
+| `POST /api/wantrace-assets/assets/:id/refresh` | 查询上游素材状态并回写 `status` / `assetUri` / `error`；`Uncertain` 会保留明确提示 |
+| `POST /api/wantrace-assets/assets/:id/library` | 把已通过的素材加入素材库「方舟认证」分类，写入 `wantraceAssetUri` 和认证快照 |
+
+生成任务的视频渠道 Base URL 是 `newapi.wantrace.com` 时，后端跳过 AK/SK 素材同步，只校验参考图中的 `asset://` 是否属于当前用户且状态为 `Active`；前端优先把素材库记录的 `wantraceAssetUri` 原样传给上游。其他渠道不会读取该字段。
+
 ## 管理员支付订单
 
 `GET /api/admin/payments/orders` 需要管理员权限，支持 `status`、`keyword`、`providerId`、`timeField`、`from`、`to`、`page`、`pageSize`。关键词匹配订单号、渠道交易号、用户名称、用户名或邮箱，也支持完整用户 ID 精确匹配。用户名和邮箱搜索忽略大小写；所有筛选同时生效，返回匹配总数和当前页订单。`timeField` 为 `created`（默认创建时间）、`paid`（渠道支付时间）、`credited`（入账时间）。`from`、`to` 为 `YYYY-MM-DD`，包含起止日期，按北京时间转换为左闭右开的时间区间；未填写的边界不限制，倒置日期或无效状态/时间口径返回 400。

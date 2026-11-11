@@ -176,6 +176,12 @@ func (s *Service) UpdateArkPrivateAssetSetting(actor *model.User, req ArkPrivate
 	if err := s.saveArkPrivateAssetSetting(setting, next); err != nil {
 		return nil, err
 	}
+	// 国内版与海外版是两套独立素材库；用户端只保留一个入口，避免同一个人重复认证后看到两个库。
+	if next.RealEnabled || next.VirtualEnabled {
+		if err := s.disableWantraceLibraryForArkPortrait(actor); err != nil {
+			return nil, err
+		}
+	}
 	if err := s.appendAdminAudit(actor, "ark_private_assets.update", "system_setting", arkPrivateAssetSettingKey, "更新方舟素材库配置", map[string]any{
 		"enabled": next.Enabled, "realEnabled": next.RealEnabled, "virtualEnabled": next.VirtualEnabled,
 		"billingEnabled": next.BillingEnabled, "realGroupPriceMicrocredits": next.RealGroupPriceMicrocredits, "virtualGroupPriceMicrocredits": next.VirtualGroupPriceMicrocredits,

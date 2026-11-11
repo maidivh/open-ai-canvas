@@ -125,3 +125,23 @@ git pull fork feat/videoclaw-asset-provider
 - `web/src/pages/admin/settings/ark-private-assets-settings-page.tsx`
 - `web/src/services/api/auth.ts`
 - `docs/design/ark-asset-provider-videoclaw.mdx`
+
+## 8. 海外版供应商（已实现）
+
+新增独立供应商「橙幻-火山方舟-海外版」，网关 `https://newapi.wantrace.com`，Bearer API Key，与上面国内版 AK/SK 素材库完全隔离。用户入口在「设置 → 方舟素材库」顶部切换「国内版 / 海外版」；管理入口在后台「方舟素材库 → 海外版」。
+
+- 数据库：Schema 95 `wantrace_assets`，新增 `wantrace_asset_groups`、`wantrace_assets`、`wantrace_verifications`。
+- 后端：`backend/internal/app/wantrace_assets_client.go`（Bearer 客户端，401 重试一次）、`settings_wantrace_assets.go`（加密 Key、渠道探测、开放范围）、`wantrace_assets.go`（H5 认证、素材、概览、生成引用校验）、`wantrace_library.go`（加入素材库）、`repository/wantrace_assets.go`、`handler/wantrace_assets.go`、`model/models_wantrace_assets.go`。
+- 前端：`web/src/services/api/wantrace-assets.ts`、`web/src/pages/settings/wantrace-assets-pane.tsx`；后台配置在 `ark-private-assets-settings-page.tsx` 的「海外版」tab。
+- 生成：渠道 Base URL 含 `newapi.wantrace.com` 时，后端跳过 AK/SK 同步，只校验 `asset://` 归属；前端 `generation-task.ts` / `video-provider-seedance.ts` / `canvas-node-generation.ts` 优先发送 `wantraceAssetUri`。
+- 一期范围：仅真人 H5 认证、真人组、Image 上传、状态轮询、`asset_uri`、加入素材库。虚拟组、视频/音频素材、改名/删除、计费未做。
+- 用户端只保留一个素材库入口：后台开启海外版真人组会自动关闭国内版真人/虚拟组，开启国内版会自动关闭海外版；历史数据两边都开启时用户端优先海外版。
+
+已验证：`go build ./...`、`go test ./internal/app ./internal/handler ./internal/repository ./internal/database`、前端 `typecheck` 与 `build` 通过；真实网关 `GET /v1/seedance/assets/channels` 返回 `seedance海外`（渠道 1），现有 2 个真人组状态 `ready`。**未**发起真实 H5 认证、未上传真实素材、未部署正式站。
+
+下一步：
+
+1. 部署到正式站后，在后台「方舟素材库 → 海外版」填写 API Key、读取渠道、选择 `seedance海外`，开启素材库和真人组。
+2. 用真实手机完成一次 H5 认证，确认组创建和授权天数。
+3. 上传图片，确认 `Processing → Active`、`asset_uri` 返回；加入素材库后，用 Base URL 为 `https://newapi.wantrace.com/seedance` 的 Seedance 模型生成，抓请求确认发送 `image_url.url = asset://...`。
+4. 该 Key 只保存在服务端设置中，禁止写入代码、文档、日志或提交记录。

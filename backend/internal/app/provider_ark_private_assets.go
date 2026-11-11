@@ -48,7 +48,15 @@ func withoutProviderAnalytics(ctx context.Context) context.Context {
 
 func (s *Service) prepareArkPrivateAssetReferences(ctx context.Context, userID string, input *canvasGenerationInput) error {
 	// 可信素材 asset:// 仅方舟视频协议支持；Agent Plan Seedream 等图片渠道不能上传或改写。
-	if input == nil || input.Mode != "video" || !isArkPrivateAssetVideoConfig(input.Config) || !parseBool(input.Config.ArkPrivateAssetUpload, true) {
+	if input == nil || input.Mode != "video" {
+		return nil
+	}
+	// 海外版走独立 Bearer 素材库，不参与 AK/SK 素材同步；只校验引用是否属于当前用户。
+	// 该检查不依赖 ArkPrivateAssetUpload，避免关闭开关后把任意 asset:// 透传给海外网关。
+	if isWantraceAssetChannelBaseURL(input.Config.BaseURL) {
+		return s.prepareWantraceAssetReferences(userID, input)
+	}
+	if !isArkPrivateAssetVideoConfig(input.Config) || !parseBool(input.Config.ArkPrivateAssetUpload, true) {
 		return nil
 	}
 	hasOwnedReference := false
@@ -491,7 +499,17 @@ func arkPrivateAssetControlPlaneEndpoint(site, region string) (string, error) {
 
 // arkAssetProviderFromBaseURL 从视频渠道的 Base URL 识别素材供应商。
 // open.feeling.ltd 与 api.wantrace.com 指向同一个 Video Claw 服务，识别为同一站点。
+// newapi.wantrace.com 是独立的海外版网关，不进入这里的 AK/SK 站点判断。
 // 无法识别的代理返回空串，调用方保持原有行为，避免影响既有自定义网关。
+func isWantraceAssetChannelBaseURL(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	return host == "newapi.wantrace.com" || strings.HasSuffix(host, ".newapi.wantrace.com")
+}
+
 func arkAssetProviderFromBaseURL(raw string) string {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {

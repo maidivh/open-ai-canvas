@@ -14,7 +14,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 94
+const CurrentSchemaVersion int64 = 95
 
 const baselineSchemaChecksum = "sha256:open-ai-canvas-schema-v1-20260830"
 const schemaMigrationAppliedAtIndexChecksum = "sha256:schema-migrations-applied-at-index-v2-20260830"
@@ -331,6 +331,10 @@ var schemaMigrations = []migration{
 	}},
 	{version: 93, name: "shared_wallet_billing", checksum: "sha256:shared-wallet-billing-v58-20261019", apply: func(tx *gorm.DB) error { return tx.AutoMigrate(&model.BillingOrder{}, &model.WalletOperation{}) }},
 	{version: 94, name: "ark_asset_provider", checksum: "sha256:ark-asset-provider-v94-20261110", apply: migrateArkAssetProvider},
+	{version: 95, name: "wantrace_assets", checksum: "sha256:wantrace-assets-v95-20261111", apply: func(tx *gorm.DB) error {
+		// 橙幻-火山方舟-海外版：独立素材组、素材与真人认证会话，Bearer 网关接口。
+		return tx.AutoMigrate(&model.WantraceAssetGroup{}, &model.WantraceAsset{}, &model.WantraceVerification{})
+	}},
 }
 
 // migrateArkAssetProvider 给可信素材绑定增加供应商维度。素材 ID 按供应商隔离，

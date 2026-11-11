@@ -25,6 +25,14 @@ description: 影策后端核心持久化表与状态边界
 短剧制作迁移编号为 73 时，执行计划将它放在版本 61 之后、依赖短剧表的版本 62 之前；不能直接按版本排序执行。版本 59–60、62–72、74–77、80–92 的名称与校验和保持 main 原样；已发布记录不改写，版本 93 补齐缺少的迁移，各路径最终结构一致。本页电商 Schema 79 是 main 编号，已有共享钱包分支的电商迁移为 93。状态检查与启动校验采用同一计划；未知名称、校验和不匹配或冲突记录仍拒绝升级。升级前备份，运行 `migrate-schema up` 与 `verify` 后再启动新后端；回退须恢复匹配的数据库备份和程序版本，不手工改迁移表。
 
 版本 94 `ark_asset_provider` 给 `ark_private_asset_bindings` 增加 `site`（默认 `volcengine`），旧记录回填火山引擎，唯一键从 `(resource_id, project_name)` 扩为 `(resource_id, project_name, site)`。同一本地资源可以在不同素材供应商下分别缓存方舟素材 ID，切换站点后不会复用上一家的 `asset://`。
+版本 95 `wantrace_assets` 为「橙幻-火山方舟-海外版」新增三张表，只建表不改旧数据：
+
+| 表 | 用途 | 关键边界 |
+| --- | --- | --- |
+| `wantrace_asset_groups` | 海外版真人素材组；`remote_id` 是网关组 ID，`upstream_id` 是上游方舟组 ID | `user_id` 归属隔离；`kind=real` 一期唯一；`expires_at` 为空或过期时不能上传和生成 |
+| `wantrace_assets` | 组内图片；`asset_uri` 只在 `status=Active` 时有值，`library_asset_id` 指向加入素材库后的素材 | `user_id`、`group_id`、`remote_id`、`asset_uri` 建索引；`Error` 保存上游失败原因 |
+| `wantrace_verifications` | H5 真人认证会话；H5 链接用 `.settings-key` 加密保存在 `h5_url_cipher` | `status` 为 pending / verified / expired / failed；`group_id` 在认证通过后写回本地组 |
+
 
 ## 邮件发送记录与消费日报订阅（Schema 91）
 
@@ -82,6 +90,10 @@ description: 影策后端核心持久化表与状态边界
 迁移把设置项 `portraitEnabled` 改名为 `realEnabled`；旧版「加入素材库」写入的真人图片（`metadata.source=ark-portrait` 且带 `arkAssetId`）转为 `ark` 分类并写入 `arkCertification`，同时删除已废弃的手动 `portraitCertified` 标记。旧素材组均视为用户自建的真人组，旧素材不进入审核。素材业务分类新增 `ark`「方舟认证」，只由服务端写入。收费订单使用 `billing_orders`，场景 `ark_asset_group`，幂等键 `ark-group:session:<id>`（真人）或 `ark-group:group:<id>`（虚拟）。
 
 可信素材绑定 `ark_private_asset_bindings` 在版本 94 增加 `site`（`volcengine` / `byteplus` / `videoclaw`，默认 `volcengine`），唯一键为 `(resource_id, project_name, site)`。同一本地资源在不同素材供应商下分别缓存素材 ID；删除或切换站点不会删除历史绑定。
+
+## 海外版真人素材库（Schema 95）
+
+海外版与国内方舟素材库是两套独立数据：`wantrace_*` 表只保存 Bearer 网关的组、素材和认证会话，不复用 `ark_portrait_*` 或 `ark_private_asset_bindings`。素材库记录通过 payload 的 `wantraceAssetUri` 与 `wantraceCertification` 关联；删除或替换素材库图片后 URI 随之失效，生成时后端会重新校验归属与状态。
 
 ## 站点姿势库（Schema 85）
 

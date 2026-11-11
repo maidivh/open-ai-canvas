@@ -158,6 +158,9 @@ func Models() []any {
 		&model.DramaTake{},
 		&model.DramaSegment{},
 		&model.DramaJob{},
+		&model.WantraceAssetGroup{},
+		&model.WantraceAsset{},
+		&model.WantraceVerification{},
 	}
 }
 

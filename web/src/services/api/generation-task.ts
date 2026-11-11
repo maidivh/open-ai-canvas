@@ -252,8 +252,10 @@ async function prepareGenerationReferences({
     mask,
 }: Pick<BackendGenerationTaskOptions, "config" | "mode" | "referenceImages" | "referenceVideos" | "referenceAudios" | "mask">): Promise<PreparedGenerationReferences> {
     // asset:// 仅视频生成可用；Agent Plan Seedream 与 Seedance 共用 /api/plan/v3，不能按 BaseURL 误判。
-    const preferArkAssetUrl = mode === "video" && usesArkVideoAssetReference(config);
-    const preparedImages = await Promise.all(referenceImages.map((image) => prepareBackendImageReference(image, preferArkAssetUrl)));
+    // 海外版网关只接受自己签发的 asset_uri；按 BaseURL 区分，不能把国内方舟素材 ID 发给它。
+    const preferWantraceAssetUrl = mode === "video" && usesWantraceVideoAssetReference(config);
+    const preferArkAssetUrl = mode === "video" && !preferWantraceAssetUrl && usesArkVideoAssetReference(config);
+    const preparedImages = await Promise.all(referenceImages.map((image) => prepareBackendImageReference(image, preferArkAssetUrl, preferWantraceAssetUrl)));
     const preparedVideos = await Promise.all(referenceVideos.map(prepareBackendMediaReference));
     const preparedAudios = await Promise.all(referenceAudios.map(prepareBackendMediaReference));
     const preparedMask = mask ? await prepareBackendImageReference(mask, false) : undefined;
@@ -262,6 +264,16 @@ async function prepareGenerationReferences({
 
 // 与后端 isArkPrivateAssetVideoConfig 对齐：方舟视频渠道允许参考图直接 asset:// 引用，
 // 跳过可信素材上传同步（适合已录入方舟素材 ID 的素材，例如被授权的真人像素材）。
+function usesWantraceVideoAssetReference(config: AiConfig) {
+    const baseUrl = resolveModelRequestConfig(config, config.model).baseUrl || config.baseUrl || "";
+    try {
+        const host = new URL(baseUrl).hostname.toLowerCase();
+        return host === "newapi.wantrace.com" || host.endsWith(".newapi.wantrace.com");
+    } catch {
+        return false;
+    }
+}
+
 function usesArkVideoAssetReference(config: AiConfig) {
     const interfaceType = resolveModelRequestConfig(config, config.model).interfaceType;
     if (interfaceType === "volcengine-ark-video" || interfaceType === "volcengine-ark-agent-plan-video") return true;
@@ -360,7 +372,8 @@ async function prepareBackendMediaReference(media: ReferenceVideo | ReferenceAud
     }
 }
 
-async function prepareBackendImageReference(image: ReferenceImage, preferArkAssetUrl = false) {
+async function prepareBackendImageReference(image: ReferenceImage, preferArkAssetUrl = false, preferWantraceAssetUrl = false) {
+    if (preferWantraceAssetUrl && image.wantraceAssetUri) return backendImageReference(image, { url: image.wantraceAssetUri });
     if (preferArkAssetUrl && image.arkAssetId) return backendImageReference(image, { url: `asset://${image.arkAssetId}` });
     if (resourceIdFromStorageKey(image.storageKey)) return backendImageReference(image, { storageKey: image.storageKey });
     const sourceUrl = image.url || image.dataUrl;

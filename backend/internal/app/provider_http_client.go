@@ -258,7 +258,9 @@ func doBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) ([]by
 	responseLimit := maxProviderResponseBytes
 	channelID := ""
 	channelProxyURL := ""
+	requestModel := ""
 	if metadata, ok := req.Context().Value(providerAnalyticsKey{}).(providerAnalyticsContext); ok && metadata.Service != nil {
+		requestModel = strings.TrimSpace(metadata.Model)
 		runtimeService = metadata.Service
 		coordinator = metadata.Service.coordinator
 		channelID = metadata.ChannelID
@@ -356,7 +358,7 @@ func doBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) ([]by
 		if runtimeService != nil && !cacheManagementRequest {
 			_ = runtimeService.RecordChannelResult(req.Context(), channelID, resp.StatusCode >= 500)
 		}
-		httpErr := providerHTTPError{StatusCode: resp.StatusCode, Status: resp.Status, Body: string(data), RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())}
+		httpErr := providerHTTPError{StatusCode: resp.StatusCode, Status: resp.Status, Body: string(data), Model: requestModel, RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())}
 		recordProviderRequest(req, startedAt, resp.StatusCode, data, httpErr)
 		return nil, "", httpErr
 	}

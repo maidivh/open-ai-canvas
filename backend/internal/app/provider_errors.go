@@ -36,6 +36,7 @@ type providerHTTPError struct {
 	StatusCode int
 	Status     string
 	Body       string
+	Model      string
 	RetryAfter time.Duration
 }
 
@@ -142,7 +143,7 @@ func withProviderRequestKind(ctx context.Context, requestKind string) context.Co
 
 func (e providerHTTPError) Error() string {
 	if e.StatusCode == http.StatusBadRequest || e.StatusCode == http.StatusUnprocessableEntity {
-		return providerErrorWithDetail(e.summary(), e.Body)
+		return providerErrorWithDetailForModel(e.summary(), e.Body, e.Model)
 	}
 	if message := speechResourceDeniedUserMessage(e.Body); (e.StatusCode == http.StatusUnauthorized || e.StatusCode == http.StatusForbidden) && message != "" {
 		return message

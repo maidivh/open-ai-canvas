@@ -108,6 +108,13 @@ type (
 	ArkGroupInput                          = app.ArkGroupInput
 	ArkPrivateAssetSettingRequest          = app.ArkPrivateAssetSettingRequest
 	ArkPrivateAssetSyncResult              = app.ArkPrivateAssetSyncResult
+	WantraceAssetSettingRequest            = app.WantraceAssetSettingRequest
+	WantraceAssetTestResult                = app.WantraceAssetTestResult
+	WantraceAssetView                      = app.WantraceAssetView
+	WantraceChannelView                    = app.WantraceChannelView
+	WantraceGroupView                      = app.WantraceGroupView
+	WantraceOverview                       = app.WantraceOverview
+	WantraceVerificationView               = app.WantraceVerificationView
 	AssetCandidateInput                    = app.AssetCandidateInput
 	AssetsSyncRequest                      = app.AssetsSyncRequest
 	AuthError                              = app.AuthError

@@ -21,3 +21,16 @@
     object-fit: contain;
     background: #ffffff;
 }
+
+/* 真人认证链接较长，放大二维码并保留安静区，避免微信扫码时模块过密无法识别。 */
+.payment-checkout-code.is-large {
+    width: 384px;
+    height: 384px;
+}
+
+.payment-checkout-code.is-large canvas,
+.payment-checkout-code.is-large svg,
+.payment-checkout-code.is-large img {
+    width: 360px;
+    height: 360px;
+}

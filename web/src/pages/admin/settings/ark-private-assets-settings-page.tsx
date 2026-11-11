@@ -7,6 +7,7 @@ import { useBlocker, useSearchParams } from "react-router";
 
 import { cn } from "@/lib/utils";
 import { getAdminArkPrivateAssetSetting, updateAdminArkPrivateAssetSetting, type AdminArkPrivateAssetSetting } from "@/services/api/auth";
+import { getAdminWantraceAssetSetting, listAdminWantraceChannels, testAdminWantraceAssetSetting, updateAdminWantraceAssetSetting, type AdminWantraceAssetSetting, type WantraceChannel } from "@/services/api/wantrace-assets";
 import { AdminPageFrame } from "../components/admin-shell";
 import { AdminStatusBadge, configuredSecretText, SettingsSectionCard } from "../components/admin-ui";
 import { ArkAdminGroupsTab } from "./ark-assets/ark-admin-groups-tab";
@@ -14,7 +15,7 @@ import { ArkAdminReviewsTab } from "./ark-assets/ark-admin-reviews-tab";
 import "./ark-assets/ark-admin.css";
 
 type ArkSite = AdminArkPrivateAssetSetting["site"];
-type ArkTab = "groups" | "reviews" | "settings";
+type ArkTab = "groups" | "reviews" | "wantrace" | "settings";
 
 const MICRO_PER_CREDIT = 1_000_000;
 const PAGE_DESCRIPTION = "管理平台方舟账号下的真人、虚拟与版权 IP 素材组，审核用户上传，并配置方舟凭据、开放范围与建组收费";
@@ -99,6 +100,7 @@ const ARK_SITE_META: Record<ArkSite, { label: string; regionPlaceholder: string;
 const ARK_TABS: Array<{ value: ArkTab; label: string }> = [
     { value: "groups", label: "素材组" },
     { value: "reviews", label: "上传审核" },
+    { value: "wantrace", label: "海外版" },
     { value: "settings", label: "配置" },
 ];
 
@@ -106,7 +108,7 @@ const ARK_TABS: Array<{ value: ArkTab; label: string }> = [
 export default function ArkPrivateAssetsSettingsPage() {
     const [searchParams, setSearchParams] = useSearchParams();
     const requestedTab = searchParams.get("tab");
-    const tab: ArkTab = requestedTab === "reviews" || requestedTab === "settings" ? requestedTab : "groups";
+    const tab: ArkTab = requestedTab === "reviews" || requestedTab === "wantrace" || requestedTab === "settings" ? requestedTab : "groups";
     const selectTab = (next: ArkTab) => {
         const params = new URLSearchParams(searchParams);
         if (next === "groups") params.delete("tab");
@@ -118,6 +120,7 @@ export default function ArkPrivateAssetsSettingsPage() {
             <div className="admin-ark-tabs-body">
                 {tab === "groups" ? <ArkAdminGroupsTab onOpenReviews={() => selectTab("reviews")} /> : null}
                 {tab === "reviews" ? <ArkAdminReviewsTab /> : null}
+                {tab === "wantrace" ? <AdminWantraceAssetSettingsForm /> : null}
                 {/* 配置表单常驻挂载：切到其他视图时保留草稿。 */}
                 <div hidden={tab !== "settings"}>
                     <ArkPrivateAssetsSettingsForm />
@@ -452,7 +455,7 @@ function ArkPrivateAssetsSettingsForm() {
                                 className="admin-ark-section admin-ark-policy-section"
                                 icon={<UsersRound className="size-4" aria-hidden="true" />}
                                 title="3. 开放用户素材组"
-                                description="用户在「设置 → 方舟素材库」自助建组：真人素材组需本人完成 H5 活体认证，虚拟素材组直接创建。版权 IP 素材组只能由管理员创建并授权。"
+                                description="用户在「设置 → 方舟素材库」自助建组：真人素材组需本人完成 H5 活体认证，虚拟素材组直接创建。版权 IP 素材组只能由管理员创建并授权。开启国内版真人/虚拟素材组会自动关闭海外版素材库，用户端只保留一个入口。"
                                 status={<AdminStatusBadge label={userGroupsOpen ? "已开放" : "未开放"} tone={userGroupsOpen ? "success" : "neutral"} />}
                             >
                                 <div className="admin-ark-policy-control">
@@ -676,5 +679,211 @@ function isAdminArkPrivateAssetSetting(value: unknown): value is AdminArkPrivate
         typeof setting.projectName === "string" &&
         typeof setting.accessKeyId === "string" &&
         typeof setting.hasAccessKeySecret === "boolean"
+    );
+}
+
+type WantraceSettingsForm = {
+    enabled: boolean;
+    realEnabled: boolean;
+    apiKey: string;
+    channelId: string;
+    realGroupLimit: number;
+    realAuthorizationDays: number;
+};
+
+/** 海外版配置：独立网关只需要 API Key + 渠道；Key 加密保存在服务端，留空表示保持原值。 */
+function AdminWantraceAssetSettingsForm() {
+    const { message } = App.useApp();
+    const [form] = Form.useForm<WantraceSettingsForm>();
+    const enabled = Form.useWatch("enabled", form) === true;
+    const realEnabled = Form.useWatch("realEnabled", form) === true;
+    const [setting, setSetting] = useState<AdminWantraceAssetSetting | null>(null);
+    const [channels, setChannels] = useState<WantraceChannel[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
+    const [probing, setProbing] = useState(false);
+    const [testing, setTesting] = useState(false);
+    const [loadError, setLoadError] = useState("");
+
+    const applySetting = useCallback(
+        (next: AdminWantraceAssetSetting) => {
+            setSetting(next);
+            form.setFieldsValue({
+                enabled: next.enabled,
+                realEnabled: next.realEnabled,
+                apiKey: "",
+                channelId: next.channelId ? String(next.channelId) : "",
+                realGroupLimit: next.realGroupLimit,
+                realAuthorizationDays: next.realAuthorizationDays,
+            });
+            if (next.channelId) {
+                setChannels((current) => (current.some((channel) => channel.id === next.channelId) ? current : [{ id: next.channelId, name: next.channelName || String(next.channelId), group: "" }, ...current]));
+            }
+        },
+        [form],
+    );
+
+    const load = useCallback(async () => {
+        setLoading(true);
+        setLoadError("");
+        try {
+            const result = await getAdminWantraceAssetSetting();
+            applySetting(result.setting);
+        } catch (error) {
+            setLoadError(error instanceof Error ? error.message : "读取海外版配置失败");
+        } finally {
+            setLoading(false);
+        }
+    }, [applySetting]);
+
+    useEffect(() => {
+        void load();
+    }, [load]);
+
+    const readChannels = async () => {
+        setProbing(true);
+        try {
+            const result = await listAdminWantraceChannels(form.getFieldValue("apiKey")?.trim() || "");
+            setChannels(result.channels);
+            const current = form.getFieldValue("channelId");
+            if (!current && result.channels.length === 1) form.setFieldValue("channelId", String(result.channels[0].id));
+            message.success(result.channels.length ? `已读取 ${result.channels.length} 个可用渠道` : "该 Key 下没有可用渠道");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "读取海外版渠道失败");
+        } finally {
+            setProbing(false);
+        }
+    };
+
+    const submit = async () => {
+        const values = await form.validateFields();
+        setSaving(true);
+        try {
+            const result = await updateAdminWantraceAssetSetting({
+                enabled: values.enabled,
+                realEnabled: values.realEnabled,
+                apiKey: values.apiKey?.trim() || undefined,
+                channelId: Number(values.channelId),
+                realGroupLimit: values.realGroupLimit,
+                realAuthorizationDays: values.realAuthorizationDays,
+            });
+            applySetting(result.setting);
+            message.success("海外版素材库配置已保存");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "保存海外版配置失败");
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const test = async () => {
+        setTesting(true);
+        try {
+            const result = await testAdminWantraceAssetSetting();
+            message.success(`连接正常：${result.channelName || result.channelId}（${result.channels.length} 个可用渠道）`);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "海外版连接测试失败");
+        } finally {
+            setTesting(false);
+        }
+    };
+
+    if (loading && !setting) {
+        return (
+            <div className="admin-settings-stack admin-ark-settings" role="status" aria-label="正在读取海外版素材库配置">
+                <div className="admin-ark-loading-card">
+                    <Skeleton active paragraph={{ rows: 5 }} />
+                </div>
+            </div>
+        );
+    }
+
+    if (!setting) {
+        return (
+            <div className="admin-settings-stack admin-ark-settings">
+                <div className="admin-ark-load-error" role="alert">
+                    <span className="admin-ark-load-error-icon">
+                        <AlertTriangle className="size-5" aria-hidden="true" />
+                    </span>
+                    <div>
+                        <h2>无法读取海外版配置</h2>
+                        <p>{loadError || "请稍后重试。"}</p>
+                    </div>
+                    <Button icon={<RefreshCw className="size-4" />} onClick={() => void load()}>
+                        重新读取
+                    </Button>
+                </div>
+            </div>
+        );
+    }
+
+    const channelOptions = channels.map((channel) => ({ value: String(channel.id), label: channel.group ? `${channel.name} · ${channel.group}` : channel.name }));
+    const configured = Boolean(setting.hasApiKey && setting.channelId);
+
+    return (
+        <div className="admin-settings-stack admin-ark-settings">
+            <div className="admin-ark-command-bar">
+                <div className="admin-ark-command-copy" aria-live="polite">
+                    <div className="flex flex-wrap items-center gap-2">
+                        <strong>橙幻-火山方舟-海外版</strong>
+                        <AdminStatusBadge label={configured ? "已配置" : "待配置"} tone={configured ? "success" : "neutral"} />
+                        {enabled && realEnabled ? <AdminStatusBadge label="用户端已开放" tone="success" /> : <AdminStatusBadge label="用户端未开放" tone="neutral" />}
+                    </div>
+                </div>
+                <div className="admin-ark-command-actions">
+                    <Button icon={<RefreshCw className="size-4" />} loading={testing} onClick={() => void test()}>
+                        测试连接
+                    </Button>
+                    <Button type="primary" icon={<Save className="size-4" />} loading={saving} onClick={() => void submit()}>
+                        保存修改
+                    </Button>
+                </div>
+            </div>
+
+            <Form form={form} layout="vertical" requiredMark={false} disabled={saving}>
+                <SettingsSectionCard
+                    icon={<KeyRound className="size-4" aria-hidden="true" />}
+                    title="1. 配置独立网关"
+                    description="海外版与国内方舟素材库完全隔离：只使用这里的 API Key 和渠道，不会读取上方国内版的 AK/SK。"
+                    status={<AdminStatusBadge label={setting.hasApiKey ? "Key 已保存" : "待填写 Key"} tone={setting.hasApiKey ? "success" : "neutral"} />}
+                >
+                    <div className="admin-ark-form-grid">
+                        <Form.Item name="apiKey" label="API Key" extra={setting.hasApiKey ? `已保存：${configuredSecretText}；留空表示保持不变。` : "填写橙幻-火山方舟-海外版控制台生成的 API Key。"}>
+                            <Input.Password autoComplete="new-password" placeholder={setting.hasApiKey ? "留空保持原 Key" : "sk-..."} />
+                        </Form.Item>
+                        <Form.Item name="channelId" label="渠道" rules={[{ required: true, message: "请选择海外版渠道" }]} extra="素材和视频必须使用同一个渠道；Key 需要具备该渠道与模型的权限。">
+                            <Select options={channelOptions} placeholder="先读取渠道，再选择" aria-label="海外版渠道" />
+                        </Form.Item>
+                        <div className="flex items-end">
+                            <Button icon={<RefreshCw className="size-4" />} loading={probing} disabled={saving} onClick={() => void readChannels()}>
+                                读取渠道
+                            </Button>
+                        </div>
+                    </div>
+                </SettingsSectionCard>
+
+                <SettingsSectionCard
+                    icon={<UsersRound className="size-4" aria-hidden="true" />}
+                    title="2. 开放范围"
+                    description="海外版一期只支持真人素材；用户完成 H5 认证后自行建组并上传图片。开启海外版会自动关闭国内版真人/虚拟素材组，用户端只保留一个入口。"
+                    status={<AdminStatusBadge label={realEnabled ? "真人已开放" : "真人未开放"} tone={realEnabled ? "success" : "neutral"} />}
+                >
+                    <div className="admin-ark-form-grid">
+                        <Form.Item name="enabled" label="启用海外版素材库" valuePropName="checked">
+                            <Switch aria-label="启用海外版素材库" />
+                        </Form.Item>
+                        <Form.Item name="realEnabled" label="开放真人素材组" valuePropName="checked">
+                            <Switch aria-label="开放海外版真人素材组" />
+                        </Form.Item>
+                        <Form.Item name="realGroupLimit" label="每个用户真人组上限" rules={[{ required: true, message: "请填写上限" }]} extra="1-200；包含进行中的认证。">
+                            <InputNumber min={1} max={200} precision={0} style={{ width: "100%" }} />
+                        </Form.Item>
+                        <Form.Item name="realAuthorizationDays" label="真人授权有效期（天）" rules={[{ required: true, message: "请填写有效期" }]} extra="1-3650；认证通过后按此天数计算组有效期。">
+                            <InputNumber min={1} max={3650} precision={0} style={{ width: "100%" }} />
+                        </Form.Item>
+                    </div>
+                </SettingsSectionCard>
+            </Form>
+        </div>
     );
 }

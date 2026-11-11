@@ -41,7 +41,16 @@ func providerErrorMessageField(value any) string {
 }
 
 func providerErrorWithDetail(fallback, raw string) string {
+	return providerErrorWithDetailForModel(fallback, raw, "")
+}
+
+// providerErrorWithDetailForModel 在通用错误归类上补充模型的认证指引。
+// 只有 Seedance 允许真人素材，其他模型仍保持“更换非真人素材”的通用提示。
+func providerErrorWithDetailForModel(fallback, raw, modelName string) string {
 	if message, ok := providerPayloadErrorCategory(raw); ok {
+		if strings.Contains(message, "真人形象") && strings.Contains(strings.ToLower(modelName), "seedance") {
+			message = "输入素材疑似包含真人形象，该模型拒绝生成。如参考图含真人，请先到「设置 → 方舟素材库」完成真人认证，并使用已通过认证的素材；非真人素材可调整后重试"
+		}
 		fallback = message
 	}
 	return appendProviderErrorDetail(fallback, raw)

@@ -57,6 +57,7 @@ func RegisterCanvasAPI(api *gin.RouterGroup, svc *service.Service) {
 	RegisterFeedbackRoutes(api, svc)
 	RegisterStorageGrantRoutes(api, svc)
 	RegisterArkPortraitRoutes(api, svc)
+	RegisterWantraceAssetRoutes(api, svc)
 	projectAPI := api.Group("")
 	projectAPI.Use(RequireFeature(svc, service.FeatureShortDrama))
 	RegisterProjectRoutes(projectAPI, svc)

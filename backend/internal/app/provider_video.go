@@ -308,11 +308,16 @@ func runSeedanceAgentPlanVideoTask(ctx context.Context, input canvasGenerationIn
 				}
 			}
 		}
+		resolution := normalizeSeedanceResolution(input.Config.VQuality, input.Config.Model)
+		// 海外版把 4K 命名为 4k；国内方舟仍使用 2160p。
+		if isWantraceAssetChannelBaseURL(input.Config.BaseURL) && resolution == "2160p" {
+			resolution = "4k"
+		}
 		body := seedanceAgentPlanRequest{
 			Model:      input.Config.Model,
 			Content:    content,
 			Ratio:      normalizeSeedanceRatio(input.Config.Size),
-			Resolution: normalizeSeedanceResolution(input.Config.VQuality, input.Config.Model),
+			Resolution: resolution,
 			Duration:   normalizeSeedanceDuration(input.Config.VideoSeconds),
 		}
 		if videoCapabilitySupportsAudio(input) {

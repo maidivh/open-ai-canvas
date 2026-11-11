@@ -77,6 +77,15 @@ function assertSeedanceAudioReferences(audioReferences: ReferenceAudio[]) {
     if (total > 15000) throw new Error("Seedance 参考音频总时长不能超过 15 秒");
 }
 
+function isWantraceAssetBaseUrl(raw: string) {
+    try {
+        const host = new URL(raw).hostname.toLowerCase();
+        return host === "newapi.wantrace.com" || host.endsWith(".newapi.wantrace.com");
+    } catch {
+        return false;
+    }
+}
+
 function seedanceApiUrl(config: ResolvedAiConfig, taskId?: string) {
     if (isVolcengineArkVideoProtocol(config.interfaceType) || isArkPlanBaseUrl(config.baseUrl)) return buildApiUrl(config.baseUrl, `/contents/generations/tasks${taskId ? `/${encodeURIComponent(taskId)}` : ""}`);
     return buildApiUrl(config.baseUrl, `/videos${taskId ? `/${encodeURIComponent(taskId)}` : ""}`);
@@ -87,27 +96,30 @@ async function buildSeedanceAgentPlanPayload(config: ResolvedAiConfig, model: st
         throw new Error(isVolcengineArkVideoProtocol(config.interfaceType) ? "火山方舟全模态参考不支持纯音频或文本+音频，请同时添加参考图片或参考视频" : "Seedance 参考音频不能单独使用，请同时添加参考图或参考视频");
     }
     const content = isVolcengineArkVideoProtocol(config.interfaceType)
-        ? await buildVolcengineArkContent(prompt, references, videoReferences, audioReferences, options)
+        ? await buildVolcengineArkContent(prompt, references, videoReferences, audioReferences, isWantraceAssetBaseUrl(config.baseUrl), options)
         : await buildSeedanceContent(config, prompt, references, videoReferences, audioReferences, deps, options);
     if (!content.length) throw new Error("请输入视频提示词，或连接参考图片/视频/音频");
     const profile = modelCapabilityConfigFor(config, model).video!;
+    const resolution = normalizeSeedanceResolution(config.vquality, modelOptionName(model));
     return {
         model: modelOptionName(model),
         content,
         ratio: normalizeSeedanceRatio(config.size),
-        resolution: normalizeSeedanceResolution(config.vquality, modelOptionName(model)),
+        resolution: isWantraceAssetBaseUrl(config.baseUrl) && resolution === "2160p" ? "4k" : resolution,
         duration: normalizeSeedanceDuration(config.videoSeconds),
         ...(profile.generateAudio.supported ? { generate_audio: boolConfig(config.videoGenerateAudio, profile.generateAudio.default) } : {}),
         ...(profile.watermark.supported ? { watermark: boolConfig(config.videoWatermark, profile.watermark.default) } : {}),
     };
 }
 
-async function buildVolcengineArkContent(prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions) {
+async function buildVolcengineArkContent(prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], wantraceChannel: boolean, options?: RequestOptions) {
     const content: Array<Record<string, unknown>> = [];
     const imagePlan = resolveVideoImageReferences(references.slice(0, SEEDANCE_REFERENCE_LIMITS.images), options, { videoCount: videoReferences.length, audioCount: audioReferences.length });
     if (prompt.trim()) content.push({ type: "text", text: prompt.trim() });
     for (const { image, role } of imagePlan) {
-        content.push({ type: "image_url", image_url: { url: await resolveVolcengineArkReferenceUrl(image.arkAssetId ? `asset://${image.arkAssetId}` : image.url || image.dataUrl, image.storageKey) }, role });
+        // 海外版渠道只接受自己签发的 asset_uri；不能把国内方舟素材 ID 发给它。
+        const reference = image.wantraceAssetUri || (wantraceChannel ? image.url || image.dataUrl : image.arkAssetId ? `asset://${image.arkAssetId}` : image.url || image.dataUrl);
+        content.push({ type: "image_url", image_url: { url: await resolveVolcengineArkReferenceUrl(reference, image.storageKey) }, role });
     }
     for (const video of videoReferences.slice(0, SEEDANCE_REFERENCE_LIMITS.videos)) {
         content.push({ type: "video_url", video_url: { url: await resolveVolcengineArkReferenceUrl(video.url, video.storageKey) }, role: "reference_video" });
@@ -188,6 +200,7 @@ async function resolveSeedanceImageUrl(image: ReferenceImage) {
 }
 
 async function resolveSeedanceVideosImageUrl(image: ReferenceImage) {
+    if (image.wantraceAssetUri) return image.wantraceAssetUri;
     const directUrl = image.url || image.dataUrl;
     if (isPublicMediaUrl(directUrl) || directUrl.startsWith("data:")) return directUrl;
     const dataUrl = await imageToDataUrl(image);
