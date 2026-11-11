@@ -2,11 +2,12 @@
 
 > 用途：换电脑后继续本会话。分支、生产部署、配置、验证结果和未完成事项都在这里。
 >
-> 约束：这是二开功能，**不要合并到 `main` / `medivh_dev`，不要提交 PR**。
+> 约束：已按用户要求合并到 `medivh_dev`；仍**不要合并到 `main`，不要提交 PR**，除非用户再次明确要求。
 
 ## 1. 分支与提交
 
 - 分支：`feat/videoclaw-asset-provider`
+- 已合并到 `medivh_dev`：merge commit `79e8f917`
 - 远端：`fork` = `git@github.com:maidivh/open-ai-canvas.git`
 - 基线：`medivh_dev` @ `c4ca8ab3`
 - 本会话提交（从旧到新）：
