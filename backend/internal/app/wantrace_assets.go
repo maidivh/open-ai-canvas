@@ -130,6 +130,13 @@ func (s *Service) WantraceAssetOverview(actor *model.User) (*WantraceOverview, e
 	}
 	assetByGroup := map[string][]WantraceAssetView{}
 	for _, asset := range assets {
+		// 审核通过的海外版素材自动加入素材库：用户完成认证并上传后，
+		// 创作页仍必须从素材库选择，不能重新上传一张未认证的副本。
+		if strings.EqualFold(asset.Status, wantraceAssetStatusActive) && strings.TrimSpace(asset.AssetURI) != "" && asset.LibraryAssetID == "" {
+			if libraryID, err := s.AddWantraceAssetToLibrary(actor, asset.ID); err == nil {
+				asset.LibraryAssetID = libraryID
+			}
+		}
 		assetByGroup[asset.GroupID] = append(assetByGroup[asset.GroupID], wantraceAssetView(asset))
 	}
 	now := time.Now()

@@ -49,7 +49,7 @@ func providerErrorWithDetail(fallback, raw string) string {
 func providerErrorWithDetailForModel(fallback, raw, modelName string) string {
 	if message, ok := providerPayloadErrorCategory(raw); ok {
 		if strings.Contains(message, "真人形象") && strings.Contains(strings.ToLower(modelName), "seedance") {
-			message = "输入素材疑似包含真人形象，该模型拒绝生成。如参考图含真人，请先到「设置 → 方舟素材库」完成真人认证，并使用已通过认证的素材；非真人素材可调整后重试"
+			message = "输入素材疑似包含真人形象，该模型拒绝生成。请到「设置 → 方舟素材库」确认图片已通过真人认证并加入素材库，然后在创作页从素材库选择该图片；重新上传的图片无法复用认证；非真人素材可调整后重试"
 		}
 		fallback = message
 	}
