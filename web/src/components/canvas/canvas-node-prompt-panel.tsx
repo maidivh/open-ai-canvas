@@ -1,3 +1,4 @@
+import { mediaSettingIssues } from "@/lib/media-settings";
 import { Button, InputNumber, Modal } from "antd";
 import { Tooltip } from "@/components/ui/base/tooltip";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
@@ -13,6 +14,8 @@ import { CreditSymbol, requestCreditCost } from "@/constant/credits";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { modelQuoteCredits, modelQuoteDescription, modelQuoteRequest } from "@/lib/model-pricing";
 import { modelRequestOptions, defaultImageParamsForModel, type ModelRequirements } from "@/lib/model-selection";
+import { useGenerationBatchLimit } from "@/lib/generation-batch-limit";
+import { getGenerationCount } from "@/lib/canvas/canvas-project-generation";
 import { referenceImageSizeSelection, type ImageDimensions } from "@/lib/canvas/canvas-reference-image-size";
 import { navigateToSettings } from "@/lib/settings-navigation";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
@@ -121,6 +124,8 @@ export function CanvasNodePromptPanel({
     const theme = canvasThemes[themeName];
     const creditsEnabled = useUserStore((state) => state.features.creditsEnabled);
     const walletMode = useUserStore((state) => state.features.walletMode);
+    // 画布节点选几张等于拆几单，上限按账号同时任务数。
+    const batchLimit = useGenerationBatchLimit();
     const promptOptimizerInstallation = usePluginStore((state) => state.installations.find((item) => item.manifest.id === PROMPT_OPTIMIZER_PLUGIN_ID));
     const promptOptimizerEnabled = usePluginStore((state) => state.pluginStates[PROMPT_OPTIMIZER_PLUGIN_ID]?.effectiveEnabled ?? Boolean(state.installations.find((item) => item.manifest.id === PROMPT_OPTIMIZER_PLUGIN_ID)?.enabled));
     const simpleMode = workspaceMode === "simple";
@@ -211,8 +216,9 @@ export function CanvasNodePromptPanel({
         if (!promptOptimizerEnabled || !promptOptimizerInstallation || !promptOptimizerPlugin.createPromptOptimizer) return null;
         return promptOptimizerPlugin.createPromptOptimizer(createPluginHostContext(promptOptimizerPlugin, promptOptimizerInstallation, globalConfig));
     }, [globalConfig, promptOptimizerEnabled, promptOptimizerInstallation]);
-    const generationCount = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
-    const generationTaskCount = mode === "image" ? generationCount : mode === "text" && !node.metadata?.listMode ? Math.max(1, Math.min(15, Math.floor(Math.abs(Number(node.metadata?.textCount)) || 1))) : 1;
+    // 张数是拆单数，上限与执行链路的 getGenerationCount 保持一致。
+    const generationCount = getGenerationCount(config.count);
+    const generationTaskCount = mode === "image" ? generationCount : mode === "text" && !node.metadata?.listMode ? getGenerationCount(String(node.metadata?.textCount ?? 1)) : 1;
     const priceChannel = resolveModelChannel(config, config.model);
     const configuredCredits = requestCreditCost({
         walletMode,
@@ -255,7 +261,10 @@ export function CanvasNodePromptPanel({
         if (!rect?.width || !rect.height) return { width: PROMPT_EDITOR_MODAL_DEFAULT_WIDTH, height: PROMPT_EDITOR_MODAL_DEFAULT_HEIGHT };
         return { width: Math.round(rect.width), height: Math.round(rect.height) };
     };
-    const isSubmitDisabled = !isRunning && !prompt.trim();
+    const settingsError = mediaSettingIssues(config, mode)
+        .map((item) => item.message)
+        .join("；");
+    const isSubmitDisabled = Boolean(settingsError) || (!isRunning && !prompt.trim());
     const canExpandPrompt = mode === "image" || mode === "video";
     const canOptimizePrompt = Boolean(promptOptimizerProvider) && canExpandPrompt;
     const isPortraitTexture = mode === "image" && Boolean(node.metadata?.portraitTexture);
@@ -345,14 +354,7 @@ export function CanvasNodePromptPanel({
     const removeMotionToolMention = () => updatePromptFromCurrent((currentPrompt) => removeToolMentions(currentPrompt, "motion"));
 
     const changeModel = (model: string) => {
-        if (mode !== "image") {
-            onConfigChange(node.id, { model });
-            return;
-        }
-        // 切换模型回到新模型默认参数；接了参考图时比例仍跟随参考图，空节点占位框随之改比例。
-        const defaults = defaultImageParamsForModel(config, model);
-        const referenceSize = referenceImageSize ? referenceImageSizeSelection(config, model, referenceImageSize, defaults) : undefined;
-        onConfigChange(node.id, { model, ...defaults, ...referenceSize, imageSizeSource: referenceSize ? "reference" : "default" });
+        if (model !== config.model) onConfigChange(node.id, { model });
     };
 
     const submit = () => {
@@ -470,6 +472,12 @@ export function CanvasNodePromptPanel({
     );
 
     const renderSubmitButton = (expanded: boolean) => {
+        if (settingsError)
+            return (
+                <span role="alert" className="text-xs" title={settingsError}>
+                    {settingsError}
+                </span>
+            );
         const showCost = creditsEnabled && credits !== null;
         const formattedCredits = credits?.toLocaleString("zh-CN", { maximumFractionDigits: 6 });
         const actionLabel = isRunning ? "生成中" : showCost ? `${routeQuote?.estimated ? "预估" : "消耗"} ${formattedCredits} 积分，生成` : "生成";
@@ -567,11 +575,11 @@ export function CanvasNodePromptPanel({
                                     <InputNumber
                                         size="small"
                                         min={1}
-                                        max={15}
-                                        value={Math.max(1, Math.min(15, Math.floor(Math.abs(Number(node.metadata?.textCount) || 1))))}
+                                        max={Math.min(15, batchLimit)}
+                                        value={Math.max(1, Math.min(Math.min(15, batchLimit), Math.floor(Math.abs(Number(node.metadata?.textCount) || 1))))}
                                         onChange={(value) =>
                                             onConfigChange(node.id, {
-                                                textCount: Math.max(1, Math.min(15, Math.floor(Math.abs(Number(value) || 1)))),
+                                                textCount: Math.max(1, Math.min(Math.min(15, batchLimit), Math.floor(Math.abs(Number(value) || 1)))),
                                             })
                                         }
                                         aria-label="文本生成份数"
@@ -590,6 +598,7 @@ export function CanvasNodePromptPanel({
                             <CanvasCameraControlPopover cameraControl={node.metadata?.cameraControl} onCameraControlChange={(options) => onConfigChange(node.id, { cameraControl: options })} theme={theme} compact={!expanded} />
                             <CanvasImageSettingsPopover
                                 config={config}
+                                countLimit={batchLimit}
                                 placement={expanded ? "topRight" : "topLeft"}
                                 buttonClassName="canvas-node-composer-settings-trigger [&>span]:min-w-0 [&_.lucide]:!size-3"
                                 onConfigChange={(key, value) => onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : key === "size" ? { size: value, imageSizeSource: "user" } : { [key]: value })}

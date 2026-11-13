@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
-import { modelQuoteCredits, modelQuoteDescription, modelQuoteRequest, normalizeTierResolution, priceTierSummaryLabel, priceTiersForCurrentSelection, requestCreditCost } from "../src/lib/model-pricing";
+import { modelQuoteCredits, modelQuoteDescription, modelQuoteRequest, systemModelQuoteRequest, normalizeTierResolution, priceTierSummaryLabel, priceTiersForCurrentSelection, requestCreditCost } from "../src/lib/model-pricing";
+import { defaultModelCapabilityConfig } from "../src/lib/model-capabilities";
 import type { ModelRequirements } from "../src/lib/model-selection";
 import { createModelChannel, defaultConfig, normalizeConfigSnapshot, resolveModelChannel, type AiConfig } from "../src/stores/use-config-store";
+import { useUserStore } from "../src/stores/use-user-store";
 import { buildNodeConfig } from "../src/components/canvas/canvas-node-prompt-panel";
 import { buildGenerationConfig } from "../src/lib/canvas/canvas-project-generation";
 import { modelRequestOptions } from "../src/lib/model-selection";
@@ -64,6 +66,7 @@ function systemConfig(input: {
             size: "16:9",
             vquality: "720P",
             videoSeconds: "5",
+            videoGenerateAudio: "false",
             count: "3",
         },
     }).config;
@@ -97,10 +100,13 @@ describe("model request pricing", () => {
         };
         const requirements = dramaSegmentVideoRequirements(request, undefined, false);
         const cost = resolveModelChannel(config, config.model).modelCosts![0];
+        const capabilityConfig = defaultModelCapabilityConfig("agnes-video", "agnes-video-2.5");
+        Object.assign(capabilityConfig.video!, { resolutions: ["720p", "768p"], defaultResolution: "720p", duration: { selection: "range", min: 5, max: 15, step: 1, default: 5 }, generateAudio: { supported: true, default: false } });
+        cost.capabilityConfig = capabilityConfig;
         expect(priceTiersForCurrentSelection(cost.logicalPriceTiers!, "video", config)).toHaveLength(0);
         expect(priceTiersForCurrentSelection(cost.logicalPriceTiers!, "video", config, requirements)).toHaveLength(1);
         const quote = modelQuoteRequest(config, config.model, "video", requirements);
-        expect(quote?.intent.options).toMatchObject({ videoSeconds: 12, size: "9:16", vquality: "768P", videoGenerateAudio: true });
+        expect(quote?.intent.options).toMatchObject({ videoSeconds: 12, size: "9:16", vquality: "768p", videoGenerateAudio: true });
         expect(quote?.intent.inputs?.image).toBe(1);
         expect(priceTiersForCurrentSelection(cost.logicalPriceTiers!, "video", config, { ...requirements, videoSeconds: "13" })).toHaveLength(0);
     });
@@ -166,6 +172,9 @@ describe("model request pricing", () => {
             ),
         });
         const channel = resolveModelChannel(config, config.model);
+        const capabilityConfig = defaultModelCapabilityConfig();
+        capabilityConfig.image!.quality = { supported: true, values: qualities, default: "1k" };
+        channel.modelCosts![0].capabilityConfig = capabilityConfig;
         for (const imageCount of [0, 1]) {
             for (const [index, quality] of qualities.entries()) {
                 const requirements: ModelRequirements = {
@@ -174,17 +183,17 @@ describe("model request pricing", () => {
                     options: { quality: quality.toUpperCase(), size: "16:9" },
                 };
                 expect(requestCreditCost({ channelMode: "remote", modelCosts: channel.modelCosts, model: "image-model", capability: "image", config, requirements, count: 1 })).toBe(index + 1 + imageCount * 3);
-                expect(modelQuoteRequest(config, config.model, "image", requirements)?.intent).toMatchObject({
+                expect(systemModelQuoteRequest(config, config.model, "image", requirements)?.intent).toMatchObject({
                     operation: imageCount ? "image_to_image" : "text_to_image",
                     inputs: { image: imageCount },
-                    options: { quality: quality.toUpperCase() },
+                    options: { quality },
                 });
             }
         }
         const characterRequirements: ModelRequirements = { capability: "image", input: { textCount: 1, imageCount: 0, characterCount: 1, videoCount: 0, audioCount: 0 }, options: { quality: "2k" } };
-        expect(modelQuoteRequest(config, config.model, "image", characterRequirements)?.intent).toMatchObject({ operation: "image_to_image", inputs: { image: 1 } });
+        expect(systemModelQuoteRequest(config, config.model, "image", characterRequirements)?.intent).toMatchObject({ operation: "image_to_image", inputs: { image: 1 } });
         expect(requestCreditCost({ channelMode: "remote", modelCosts: channel.modelCosts, model: "image-model", capability: "image", config, requirements: characterRequirements, count: 1 })).toBe(5);
-        expect(priceTiersForCurrentSelection(channel.modelCosts![0]!.logicalPriceTiers!, "image", { ...config, quality: "8k" })).toHaveLength(0);
+        expect(priceTiersForCurrentSelection(channel.modelCosts![0]!.logicalPriceTiers!, "image", { ...config, quality: "8k" })[0]?.unitPriceMicrocredits).toBe(1_000_000);
     });
 
     test("prefers a matching image specification over the uniform fallback", () => {
@@ -195,6 +204,9 @@ describe("model request pricing", () => {
                 { selector: { operation: "text_to_image", quality: "2k" }, billingMode: "fixed_request", unitPriceMicrocredits: 2_000_000 },
             ],
         });
+        const capabilityConfig = defaultModelCapabilityConfig();
+        capabilityConfig.image!.quality = { supported: true, values: ["2k", "4k"], default: "2k" };
+        resolveModelChannel(config, config.model).modelCosts![0].capabilityConfig = capabilityConfig;
         const tiers = resolveModelChannel(config, config.model).modelCosts![0]!.logicalPriceTiers!;
         expect(priceTiersForCurrentSelection(tiers, "image", { ...config, quality: "2k" })[0]?.unitPriceMicrocredits).toBe(2_000_000);
         expect(priceTiersForCurrentSelection(tiers, "image", { ...config, quality: "4k" })[0]?.unitPriceMicrocredits).toBe(1_000_000);
@@ -303,7 +315,7 @@ describe("model request pricing", () => {
                 capability: "video",
                 operation: "text_to_video",
                 inputs: { image: 0, video: 0, audio: 0 },
-                options: { vquality: "720", videoSeconds: 5 },
+                options: { vquality: "720p", videoSeconds: 5 },
             },
         });
     });
@@ -316,6 +328,10 @@ describe("model request pricing", () => {
                 { selector: { vquality: "1080p", videoSeconds: "10", videoGenerateAudio: "true" }, billingMode: "token", unitPriceMicrocredits: 0, outputTokenPriceMicrocredits: 3_000_000 },
             ],
         });
+        const capabilityConfig = defaultModelCapabilityConfig("agnes-video", "agnes-video-2.5");
+        capabilityConfig.video!.generateAudio = { supported: true, default: false };
+        capabilityConfig.video!.resolutions = ["720P", "1080P"];
+        config.channels[0].modelCosts![0].capabilityConfig = capabilityConfig;
         const tiers = resolveModelChannel(config, config.model).modelCosts![0]!.logicalPriceTiers!;
         for (const videoGenerateAudio of [false, "false", true, "true"]) {
             const requirements = { ...textVideoRequirements, videoSeconds: "10", options: { vquality: "1080P", videoSeconds: 5, videoGenerateAudio } };
@@ -341,14 +357,15 @@ describe("model request pricing", () => {
     test("builds a direct system-video quote without inventing a logical model ID", () => {
         const config = systemConfig({ tiers: [{ selector: {}, billingMode: "token", unitPriceMicrocredits: 0 }] });
         const requirements = { ...textVideoRequirements, options: { videoGenerateAudio: false, vquality: "1080p" } };
-        expect(modelQuoteRequest(config, config.model, "video", requirements)).toMatchObject({ channelId: "system-channel", modelKey: "agnes-video-2.5", intent: { options: { videoGenerateAudio: false, vquality: "1080p" } } });
+        expect(modelQuoteRequest(config, config.model, "video", requirements)).toMatchObject({ channelId: "system-channel", modelKey: "agnes-video-2.5", intent: { options: { vquality: "1080p" } } });
+        expect(modelQuoteRequest(config, config.model, "video", requirements)?.intent.options).not.toHaveProperty("videoGenerateAudio");
         expect(modelQuoteRequest(config, config.model, "video", requirements)?.logicalModelID).toBeUndefined();
         expect(modelQuoteRequest(config, config.model, "image", requirements)).toBeUndefined();
     });
 
     test.each(["image", "text", "audio"] as const)("external direct %s models request server quotes without logical-model IDs", (capability) => {
         const config = systemConfig({ capability, tiers: [{ selector: {}, billingMode: "fixed_request", unitPriceMicrocredits: 200_000 }] });
-        const requirements: ModelRequirements = { capability, options: { imageCount: 3, maxTokens: 256, duration: 8 } };
+        const requirements: ModelRequirements = { capability, options: capability === "image" ? { count: 3, size: "16:9" } : { imageCount: 3, maxTokens: 256, duration: 8 } };
         const request = modelQuoteRequest(config, config.model, capability, requirements, "external");
         expect(request).toMatchObject({ channelId: "system-channel", modelKey: `${capability}-model`, intent: { capability, options: requirements.options } });
         expect(request?.logicalModelID).toBeUndefined();
@@ -371,6 +388,22 @@ describe("model request pricing", () => {
         expect(single?.intent.options.count).toBe(3);
         expect(requirements.options?.count).toBe(3);
         expect(config.count).toBe("3");
+    });
+
+    test("workbench image quotes keep the outputs of one task when the account can submit only one task", () => {
+        const config = systemConfig({ capability: "image", tiers: [{ selector: {}, billingMode: "fixed_request", unitPriceMicrocredits: 200_000 }] });
+        const profile = defaultModelCapabilityConfig();
+        profile.image!.maxOutputs = 4;
+        resolveModelChannel(config, config.model).modelCosts![0].capabilityConfig = profile;
+        const limits = useUserStore.getState().runtimeLimits;
+        useUserStore.getState().setRuntimeLimits({ ...limits, activeTaskLimit: 1 });
+        try {
+            const requirements: ModelRequirements = { capability: "image", options: { count: 4 } };
+            expect(modelQuoteRequest(config, config.model, "image", requirements, "external")?.intent.options.count).toBe(4);
+            expect(modelQuoteRequest(config, config.model, "image", requirements, "external", "one-task-per-output")?.intent.options.count).toBe(1);
+        } finally {
+            useUserStore.getState().setRuntimeLimits(limits);
+        }
     });
 
     test("batch display sums already-rounded per-task quotes instead of rounding the raw batch price", () => {

@@ -235,6 +235,8 @@ func doJSON(req *http.Request, target interface{}) error {
 	return nil
 }
 
+type providerProxyURLKey struct{}
+
 func doBinary(req *http.Request) ([]byte, string, error) {
 	return doBinaryWithConsumer(req, nil)
 }
@@ -257,14 +259,16 @@ func doBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) ([]by
 	cacheManagementRequest := requestKind == "cache-create" || requestKind == "cache-delete"
 	responseLimit := maxProviderResponseBytes
 	channelID := ""
-	channelProxyURL := ""
+	channelProxyURL, _ := req.Context().Value(providerProxyURLKey{}).(string)
 	requestModel := ""
 	if metadata, ok := req.Context().Value(providerAnalyticsKey{}).(providerAnalyticsContext); ok && metadata.Service != nil {
 		requestModel = strings.TrimSpace(metadata.Model)
 		runtimeService = metadata.Service
 		coordinator = metadata.Service.coordinator
 		channelID = metadata.ChannelID
-		channelProxyURL = metadata.ProxyURL
+		if metadata.ProxyURL != "" {
+			channelProxyURL = metadata.ProxyURL
+		}
 		policy, err := metadata.Service.RuntimePolicy()
 		if err != nil {
 			err = fmt.Errorf("读取生成资源限制失败：%w", err)
@@ -437,6 +441,9 @@ func recordProviderRequest(req *http.Request, startedAt time.Time, statusCode in
 		Status: status, StatusCode: statusCode, DurationMs: time.Since(startedAt).Milliseconds(),
 		ErrorCode: errorCode, Error: errorText, ConcurrencyLimit: metadata.ConcurrencyLimit, UpstreamURL: req.URL.Scheme + "://" + req.URL.Host + req.URL.Path,
 		ProviderRequestID: metadata.ProviderRequestID, RequestContentType: req.Header.Get("Content-Type"), RequestBody: requestPayloadForLog(req), ResponseBody: SanitizeAPICallPayload(responseBody, ""),
+	}
+	if requestKind == "create" {
+		callLog.GenerationContentJSON = metadata.GenerationContentJSON
 	}
 	channelSlotFailure := false
 	if code, message := ChannelSlotFailureDetails(requestErr); code != "" {

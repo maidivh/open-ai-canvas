@@ -64,7 +64,7 @@ func newBillingTerminalDB(t *testing.T, driver string) *gorm.DB {
 	}
 	conn.SetMaxOpenConns(16)
 	t.Cleanup(func() { _ = conn.Close() })
-	if err := db.AutoMigrate(&model.Task{}, &model.CreditAccount{}, &model.BillingOrder{}, &model.ApiCallLog{}, &model.CreditLedgerEntry{}, &model.TaskTextDelta{}); err != nil {
+	if err := db.AutoMigrate(&model.SystemSetting{}, &model.Task{}, &model.CreditAccount{}, &model.BillingOrder{}, &model.ApiCallLog{}, &model.CreditLedgerEntry{}, &model.TaskTextDelta{}); err != nil {
 		t.Fatal(err)
 	}
 	return db

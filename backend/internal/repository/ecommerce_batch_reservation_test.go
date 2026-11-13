@@ -76,7 +76,7 @@ func ecommerceBatchTestPostgres(t *testing.T) *gorm.DB {
 
 func testEcommerceBatchReservationsCompete(t *testing.T, db *gorm.DB) {
 	t.Helper()
-	if err := db.AutoMigrate(&model.CreditAccount{}, &model.BillingOrder{}, &model.CreditLedgerEntry{}); err != nil {
+	if err := db.AutoMigrate(&model.SystemSetting{}, &model.CreditAccount{}, &model.BillingOrder{}, &model.CreditLedgerEntry{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Create(&model.CreditAccount{UserID: "user", AvailableMicrocredits: 1500}).Error; err != nil {

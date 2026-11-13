@@ -34,6 +34,7 @@ func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 	registerChannelOrderRoutes(r, svc)
 	registerNotificationRoutes(r, svc)
 	registerAuthProfileRoutes(r, svc)
+	registerWechatRoutes(r, svc)
 	r.GET("/auth/settings", func(c *gin.Context) {
 		settings, err := svc.PublicAuthSettings()
 		if err != nil {
@@ -168,6 +169,7 @@ func RegisterAuthRoutes(r *gin.RouterGroup, svc *service.Service) {
 		c.Redirect(http.StatusFound, target)
 	})
 	r.GET("/auth/linuxdo/callback", rejectedLoginAudit(svc, "linuxdo"), linuxDOCallbackHandler(svc))
+	registerOIDCRoutes(r, svc)
 	r.POST("/auth/logout", func(c *gin.Context) {
 		// [小洞免登定制] 浏览器 Cookie 跨标签共享，旧页面点退出也可能注销刚切换的新账号。
 		// 免登标记存在时先校验页面账号；不匹配就拒绝，不能删除会话或清除共享 Cookie。
@@ -664,6 +666,9 @@ func currentUser(c *gin.Context, svc *service.Service) (*model.User, error) {
 	user, err := svc.CurrentUser(sessionCookie(c))
 	if err != nil {
 		return nil, err
+	}
+	if expected := c.GetHeader("X-Canvas-Expected-User"); expected != "" && expected != user.ID {
+		return nil, service.Forbidden("账号已切换，请重新加载后重试")
 	}
 	// [小洞免登定制] 在上游统一鉴权入口增加页面账号校验，覆盖保存、上传、生成等业务。
 	// Cookie 决定真实身份；账号头只拦截旧标签串用新 Cookie，不授予任何权限。

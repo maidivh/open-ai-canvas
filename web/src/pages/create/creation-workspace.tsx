@@ -24,13 +24,17 @@ import { CreditSymbol, requestCreditCost } from "@/constant/credits";
 import { ASSET_CATEGORY_LABELS } from "@/lib/asset-category";
 import { formatShotOrdinal } from "@/lib/shot-label";
 import { buildImageResolutionOptions, formatImageResolutionSize, supportsImageResolutionPresets } from "@/lib/image-resolution-tiers";
-import { normalizeVideoValue, videoDurationOptions, type ImageCapabilityConfig, type VideoCapabilityConfig } from "@/lib/model-capabilities";
+import { videoDurationOptions, type ImageCapabilityConfig, type VideoCapabilityConfig } from "@/lib/model-capabilities";
+import { preserveVideoSettings as normalizeVideoValue } from "@/lib/media-settings";
+import { mediaSettingIssues } from "@/lib/media-settings";
+import { MediaSettingsNotice } from "@/components/media-settings-notice";
 import { mergedImageCapabilityConfig, type ModelRequirements } from "@/lib/model-selection";
 import { imageQualityLabel } from "@/lib/image-quality";
 import { modelQuoteCredits, modelQuoteDescription, modelQuoteRequest } from "@/lib/model-pricing";
 import { quoteModel, type LogicalModelQuote } from "@/services/api/logical-models";
 import { modelOptionName, resolveModelChannel, type AiConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
+import { useGenerationBatchLimit } from "@/lib/generation-batch-limit";
 import type { PromptOptimizerProvider } from "@/lib/plugins/plugin-types";
 import { type CreationReference } from "./creation-references";
 import { creationAttachmentKind, type CreationAttachment, type CreationMode } from "./creation-assets";
@@ -216,11 +220,17 @@ export function CreationComposer(props: ComposerProps) {
     const [trackState, setTrackState] = useState({ canScrollLeft: false, canScrollRight: false, isExpanded: true, isDragging: false });
     const previousAttachmentCountRef = useRef(0);
     const interactionBusy = props.busy || props.referenceReplacementBusy;
-    const canSubmit = Boolean(props.prompt.trim()) && !interactionBusy;
+    // 创作页张数等于拆单数，上限按账号同时任务数，硬上限仍为 15。
+    const imageBatchLimit = Math.min(15, useGenerationBatchLimit());
+    const settingsError = mediaSettingIssues(props.config, props.mode, props.model)
+        .map((item) => item.message)
+        .join("；");
+    const canSubmit = Boolean(props.prompt.trim()) && !interactionBusy && !settingsError;
     const creditsEnabled = useUserStore((state) => state.features.creditsEnabled);
     const walletMode = useUserStore((state) => state.features.walletMode);
     const priceChannel = resolveModelChannel(props.config, props.model);
-    const generationTaskCount = props.mode === "image" ? Math.max(1, Math.min(15, props.imageProfile.maxOutputs, Math.floor(Number(props.count) || 1))) : 1;
+    // 图片报价按单张任务查询，再按与实际提交一致的拆单数合计。
+    const generationTaskCount = props.mode === "image" ? Math.max(1, Math.min(imageBatchLimit, Math.floor(Number(props.count) || 1))) : 1;
     const quoteRequest = useMemo(() => modelQuoteRequest(props.config, props.model, props.mode, props.modelRequirements, walletMode, "one-task-per-output"), [props.config, props.mode, props.model, props.modelRequirements, walletMode]);
     const [routeQuote, setRouteQuote] = useState<LogicalModelQuote | null>(null);
     const canOptimizePrompt = Boolean(props.promptOptimizerProvider) && (props.mode === "image" || props.mode === "video");
@@ -279,7 +289,7 @@ export function CreationComposer(props: ComposerProps) {
         [props.attachments],
     );
     const visibleAttachments = useMemo(() => (referenceFilter === "all" ? props.attachments : props.attachments.filter((attachment) => creationAttachmentKind(attachment) === referenceFilter)), [props.attachments, referenceFilter]);
-    const imageSettingsSupported = props.imageProfile.size.parameter !== "none" || props.imageProfile.quality.supported || props.imageProfile.maxOutputs > 1;
+    const imageSettingsSupported = props.imageProfile.size.parameter !== "none" || props.imageProfile.quality.supported || imageBatchLimit > 1;
     const updateTrackScrollState = useCallback(() => {
         const track = attachmentTrackRef.current;
         if (!track) return;
@@ -596,6 +606,21 @@ export function CreationComposer(props: ComposerProps) {
                     </span>
                 </Button>
             </footer>
+            {props.mode === "image" || props.mode === "video" ? (
+                <MediaSettingsNotice
+                    config={{ ...props.config, model: props.model }}
+                    capability={props.mode}
+                    onChange={(field, value) => {
+                        if (field === "size") props.setRatio(value);
+                        else if (field === "quality") props.setQuality(value);
+                        else if (field === "imageResolution") props.setImageResolution(value);
+                        else if (field === "imageParameters") props.setImageParameters(value);
+                        else if (field === "count") props.setCount(value);
+                        else if (field === "videoSeconds") props.setSeconds(value);
+                        else if (field === "vquality") props.setVideoQuality(value);
+                    }}
+                />
+            ) : null}
             <CreationMediaPreviewModal url={previewUrl} type={previewType} onClose={() => setPreviewUrl("")} />
         </SpotlightSurface>
     );
@@ -715,6 +740,8 @@ function ModePicker({ mode, onModeChange }: { mode: CreationMode; onModeChange: 
 
 function GenerationSettingsMenu(props: ComposerProps) {
     const [open, setOpen] = useState(false);
+    // 张数上限与发送时的实际单数保持一致。
+    const imageBatchLimit = Math.min(15, useGenerationBatchLimit());
     const activeQualityOptions = props.imageProfile.quality.values.map((value) => qualityOptions.find((item) => item.value === value) || { value, label: imageQualityLabel(value), description: "模型支持的质量/分辨率" });
     const qualityLabel = activeQualityOptions.find((item) => item.value === props.quality)?.label || qualityOptions.find((item) => item.value === props.quality)?.label || props.quality || "自动";
     // 尺寸/比例/分辨率选项取同显示名分组内全部模型的并集，路由模型只决定发送参数。
@@ -735,7 +762,7 @@ function GenerationSettingsMenu(props: ComposerProps) {
     const imageSummary = [
         ...(mergedProfile.size.parameter !== "none" ? [referenceImageSizeSelected ? referenceImageSizeLabel : usesImageResolutionPicker ? formatImageResolutionSize(props.ratio, imageResolutionOptions) : props.ratio] : []),
         ...(props.imageProfile.quality.supported ? [qualityLabel] : []),
-        ...(props.imageProfile.maxOutputs > 1 ? [props.count] : []),
+        ...(imageBatchLimit > 1 ? [props.count] : []),
     ].join(" · ");
     const videoRatioSupported = props.mode === "video" && ratios.length > 0;
     const summary = props.mode === "video" ? [...(videoRatioSupported ? [props.ratio] : []), ...(videoResolutionSupported ? [videoResolutionLabel(props.videoQuality)] : [])].join(" · ") : imageSummary;
@@ -744,6 +771,7 @@ function GenerationSettingsMenu(props: ComposerProps) {
             <div className="creation-parameter-menu max-h-[65vh] overflow-y-auto">
                 <ImageParameterFields
                     profile={props.imageProfile}
+                    countLimit={imageBatchLimit}
                     config={{ ...props.config, model: props.model, size: props.ratio, quality: props.quality, imageResolution: props.imageResolution, imageParameters: props.imageParameters, count: props.count }}
                     onChange={(key, value) => {
                         const setters = {
@@ -817,12 +845,12 @@ function GenerationSettingsMenu(props: ComposerProps) {
                                 </div>
                             </SettingSection>
                         ) : null}
-                        {props.imageProfile.maxOutputs > 1 ? (
+                        {imageBatchLimit > 1 ? (
                             <SettingSection title="生成张数" value={`${props.count} 张`}>
                                 <div className="creation-parameter-content">
                                     <div className="creation-choice-grid is-count">
                                         {countOptions
-                                            .filter((option) => Number(option) <= props.imageProfile.maxOutputs)
+                                            .filter((option) => Number(option) <= imageBatchLimit)
                                             .map((option) => (
                                                 <button key={option} type="button" aria-pressed={option === props.count} className={option === props.count ? "is-selected" : ""} onClick={() => props.setCount(option)}>
                                                     {option}
@@ -835,8 +863,8 @@ function GenerationSettingsMenu(props: ComposerProps) {
                                             inputMode="numeric"
                                             pattern="[0-9]*"
                                             value={props.count}
-                                            onChange={(event) => props.setCount(String(Math.max(1, Math.min(props.imageProfile.maxOutputs, Number(event.target.value) || 1))))}
-                                            aria-label={`生成张数，范围 1 到 ${props.imageProfile.maxOutputs}`}
+                                            onChange={(event) => props.setCount(String(Math.max(1, Math.min(imageBatchLimit, Number(event.target.value) || 1))))}
+                                            aria-label={`生成张数，范围 1 到 ${imageBatchLimit}`}
                                         />
                                         <em>张</em>
                                     </label>
@@ -888,9 +916,9 @@ function ThinkingControl({ levels, value, resolvedLevel, onChange, disabled }: {
     );
 }
 
-function DurationMenu({ profile, seconds, onChange }: { profile: VideoCapabilityConfig; seconds: string; onChange: (value: string) => void }) {
+function DurationMenu({ profile, seconds, onChange, protocol }: { profile: VideoCapabilityConfig; seconds: string; onChange: (value: string) => void; protocol?: string }) {
     const [open, setOpen] = useState(false);
-    const value = Number(normalizeVideoValue(profile, { seconds }).seconds);
+    const value = Number(normalizeVideoValue(profile, { seconds }, protocol).seconds);
     const presets = profile.duration.selection === "enum" ? videoDurationOptions(profile) : [];
     const fallbackPreset = presets.length ? presets : [profile.duration.default];
     const min = profile.duration.selection === "range" ? profile.duration.min || 1 : Math.min(...fallbackPreset);

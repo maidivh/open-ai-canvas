@@ -1,3 +1,4 @@
+import { assertMediaSettings, resolvedMediaConfig } from "@/lib/media-settings";
 import type { ThinkingRequest } from "@/lib/text-thinking";
 import { createClientUUID } from "@/lib/client-id";
 import { normalizeAudioFormatForConfig, normalizeAudioVoiceForConfig } from "@/lib/audio-generation";
@@ -304,7 +305,8 @@ export async function prepareBackendGenerationTask(options: BackendGenerationTas
 }
 
 function backendGenerationTaskInput(options: BackendGenerationTaskOptions, prepared: PreparedGenerationReferences): CreateTaskInput {
-    const { projectId, mode, prompt, config, metadata } = options;
+    const { projectId, mode, prompt, metadata } = options;
+    const config = resolveGenerationWorkflowExecution(options.config, mode) ? options.config : resolvedMediaConfig(options.config, mode);
     const videoOperation = generationOperation(options);
     const workflow = resolveGenerationWorkflowExecution(config, mode);
     const logicalModelId = workflow ? "" : logicalModelIDForConfig(config);
@@ -373,8 +375,9 @@ async function prepareBackendMediaReference(media: ReferenceVideo | ReferenceAud
 }
 
 async function prepareBackendImageReference(image: ReferenceImage, preferArkAssetUrl = false, preferWantraceAssetUrl = false) {
-    if (preferWantraceAssetUrl && image.wantraceAssetUri) return backendImageReference(image, { url: image.wantraceAssetUri });
-    if (preferArkAssetUrl && image.arkAssetId) return backendImageReference(image, { url: `asset://${image.arkAssetId}` });
+    const sourceResourceId = resourceIdFromStorageKey(image.storageKey) || undefined;
+    if (preferWantraceAssetUrl && image.wantraceAssetUri) return backendImageReference(image, { url: image.wantraceAssetUri, sourceResourceId });
+    if (preferArkAssetUrl && image.arkAssetId) return backendImageReference(image, { url: `asset://${image.arkAssetId}`, sourceResourceId });
     if (resourceIdFromStorageKey(image.storageKey)) return backendImageReference(image, { storageKey: image.storageKey });
     const sourceUrl = image.url || image.dataUrl;
     if (/^https?:\/\//i.test(sourceUrl)) return backendImageReference(image, { url: sourceUrl });
@@ -397,6 +400,7 @@ function backendImageReference(image: ReferenceImage, override: Partial<Referenc
         dataUrl: "",
         url: override.url,
         storageKey: override.storageKey,
+        ...(override.sourceResourceId ? { sourceResourceId: override.sourceResourceId } : {}),
         ...(image.bytes ? { bytes: image.bytes } : {}),
         ...(image.width ? { width: image.width } : {}),
         ...(image.height ? { height: image.height } : {}),
@@ -422,20 +426,25 @@ function backendMediaReference<T extends ReferenceVideo | ReferenceAudio>(media:
 }
 
 export function backendProviderConfig(config: AiConfig, mode: BackendGenerationMode = "image") {
+    if (!resolveGenerationWorkflowExecution(config, mode)) {
+        assertMediaSettings(config, mode);
+        config = resolvedMediaConfig(config, mode);
+    }
     const requestConfig = resolveModelRequestConfig(config, config.model);
     const workflow = resolveGenerationWorkflowExecution(config, mode);
     if (workflow) return workflowProviderConfig(config, requestConfig, workflow);
+    const profile = modelCapabilityConfigFor(config, config.model);
     const generationOptions = {
-        ...(mode === "image" ? { imageParameters: imageParameterRequest(modelCapabilityConfigFor(config, config.model).image!, config, true) } : {}),
-        size: config.size,
+        ...(mode === "image" ? { imageParameters: imageParameterRequest(profile.image!, config, true) } : {}),
+        size: (mode === "image" && profile.image?.size.parameter === "none") || (mode === "video" && !profile.video?.ratios.length) ? undefined : config.size,
         imageResolution: omittedImageQuality(config.imageResolution),
         quality: omittedImageQuality(config.quality),
-        transparentBackground: config.transparentBackground,
+        transparentBackground: mode === "image" && !profile.image?.transparentBackground.supported ? undefined : config.transparentBackground,
         count: config.count,
-        videoSeconds: config.videoSeconds,
-        vquality: config.vquality,
-        videoGenerateAudio: config.videoGenerateAudio,
-        videoWatermark: config.videoWatermark,
+        videoSeconds: mode === "video" && profile.video?.durationSupported === false ? undefined : config.videoSeconds,
+        vquality: mode === "video" && !profile.video?.resolutions.length ? undefined : config.vquality,
+        videoGenerateAudio: mode === "video" && !profile.video?.generateAudio.supported ? undefined : config.videoGenerateAudio,
+        videoWatermark: mode === "video" && !profile.video?.watermark.supported ? undefined : config.videoWatermark,
         videoArkPrivateAssetUpload: config.videoArkPrivateAssetUpload,
         audioVoice: normalizeAudioVoiceForConfig(config, config.audioVoice),
         audioFormat: normalizeAudioFormatForConfig(config, config.audioFormat),
@@ -535,7 +544,7 @@ function omittedImageQuality(value: string | undefined) {
     const normalized = String(value || "")
         .trim()
         .toLowerCase();
-    return normalized === "auto" || normalized === "any" ? undefined : value;
+    return !normalized || normalized === "auto" || normalized === "any" ? undefined : value;
 }
 
 export function parseBackendGenerationResult(task: GenerationTask): BackendGenerationResult {

@@ -178,11 +178,18 @@ func TestMergedSchemaPreservesPublishedHistories(t *testing.T) {
 					t.Fatalf("existing migration changed: before=%+v after=%+v", old, current)
 				}
 			}
-			want93 := "ecommerce_agent_and_knowledge"
+			want103 := "ecommerce_agent_and_knowledge"
 			if history.want79 == "ecommerce_agent_and_knowledge" {
-				want93 = "shared_wallet_billing"
+				want103 = "shared_wallet_billing"
 			}
-			for version, want := range map[int64]string{61: history.want61, 73: history.want73, 78: history.want78, 79: history.want79, 93: want93} {
+			if history.walletAt58 || history.walletAt61 || history.want73 == "shared_wallet_billing" || history.want78 == "shared_wallet_billing" {
+				want103 = ""
+			}
+			wantMigrations := map[int64]string{61: history.want61, 73: history.want73, 78: history.want78, 79: history.want79, 93: "ecommerce_round_history"}
+			if want103 != "" {
+				wantMigrations[103] = want103
+			}
+			for version, want := range wantMigrations {
 				var record schemaMigration
 				if err := db.First(&record, "version = ?", version).Error; err != nil {
 					t.Fatal(err)

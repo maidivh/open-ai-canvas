@@ -14,7 +14,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 95
+const CurrentSchemaVersion int64 = 105
 
 const baselineSchemaChecksum = "sha256:open-ai-canvas-schema-v1-20260830"
 const schemaMigrationAppliedAtIndexChecksum = "sha256:schema-migrations-applied-at-index-v2-20260830"
@@ -329,36 +329,51 @@ var schemaMigrations = []migration{
 		}
 		return nil
 	}},
-	{version: 93, name: "shared_wallet_billing", checksum: "sha256:shared-wallet-billing-v58-20261019", apply: func(tx *gorm.DB) error { return tx.AutoMigrate(&model.BillingOrder{}, &model.WalletOperation{}) }},
-	{version: 94, name: "ark_asset_provider", checksum: "sha256:ark-asset-provider-v94-20261110", apply: migrateArkAssetProvider},
-	{version: 95, name: "wantrace_assets", checksum: "sha256:wantrace-assets-v95-20261111", apply: func(tx *gorm.DB) error {
-		// 橙幻-火山方舟-海外版：独立素材组、素材与真人认证会话，Bearer 网关接口。
+	{version: 93, name: "ecommerce_round_history", checksum: "sha256:ecommerce-round-history-v93-20261109", apply: func(tx *gorm.DB) error {
+		// Additive only: a new table plus a nullable pointer column. Existing
+		// projects stay readable and are converted lazily on their next save.
+		if err := tx.AutoMigrate(&model.EcommerceProject{}, &model.EcommerceRound{}); err != nil {
+			return err
+		}
+		return nil
+	}},
+	{version: 94, name: "drama_cast_styles_import", checksum: "sha256:drama-cast-styles-import-v94", apply: migrateDramaCastStylesImport},
+	{version: 95, name: "ark_private_asset_binding_identity", checksum: "sha256:ark-private-asset-binding-identity-v95", apply: migrateArkPrivateAssetBindingIdentity},
+	{version: 96, name: "canvas_unified_text_nodes", checksum: canvasNodeModelChecksum, apply: migrateCanvasNodeModel},
+	{version: 97, name: "channel_websites", checksum: "sha256:channel-websites-v97-20261110", apply: migrateChannelWebsites},
+	{version: 98, name: "api_log_generation_content", checksum: "sha256:api-log-generation-content-v98", apply: migrateAPILogGenerationContent},
+	{version: 99, name: "site_traffic_events", checksum: "sha256:site-traffic-events-v99-20261111", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.SiteTrafficEvent{})
+	}},
+	{version: 100, name: "agent_mcp_connections", checksum: "sha256:agent-mcp-connections-v100", apply: migrateAgentMCP},
+	{version: 101, name: "creation_conversation_history", checksum: "sha256:creation-conversation-history-v101", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.CreationConversation{}, &model.CreationConversationMessage{}, &model.CreationConversationResource{})
+	}},
+	{version: 102, name: "wechat_oauth", checksum: "sha256:wechat-oauth-v102", apply: func(tx *gorm.DB) error {
+		if !tx.Migrator().HasTable(&model.OAuthState{}) {
+			return nil
+		}
+		for _, field := range []string{"Purpose", "ClientID", "ProfileJSON"} {
+			if !tx.Migrator().HasColumn(&model.OAuthState{}, field) {
+				if err := tx.Migrator().AddColumn(&model.OAuthState{}, field); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}},
+	{version: 103, name: "shared_wallet_billing", checksum: "sha256:shared-wallet-billing-v58-20261019", apply: func(tx *gorm.DB) error { return tx.AutoMigrate(&model.BillingOrder{}, &model.WalletOperation{}) }},
+	{version: 104, name: "ark_asset_provider", checksum: "sha256:ark-asset-provider-v94-20261110", apply: migrateArkAssetProvider},
+	{version: 105, name: "wantrace_assets", checksum: "sha256:wantrace-assets-v95-20261111", apply: func(tx *gorm.DB) error {
 		return tx.AutoMigrate(&model.WantraceAssetGroup{}, &model.WantraceAsset{}, &model.WantraceVerification{})
 	}},
 }
 
-// migrateArkAssetProvider 给可信素材绑定增加供应商维度。素材 ID 按供应商隔离，
-// 切换素材站点后不能复用上一家的 asset://。旧记录按火山引擎回填。
-func migrateArkAssetProvider(tx *gorm.DB) error {
-	entity := &model.ArkPrivateAssetBinding{}
-	if !tx.Migrator().HasTable(entity) {
+func migrateAPILogGenerationContent(tx *gorm.DB) error {
+	if !tx.Migrator().HasTable(&model.ApiCallLog{}) || tx.Migrator().HasColumn(&model.ApiCallLog{}, "GenerationContentJSON") {
 		return nil
 	}
-	if !tx.Migrator().HasColumn(entity, "Site") {
-		if err := tx.Migrator().AddColumn(entity, "Site"); err != nil {
-			return fmt.Errorf("增加素材绑定站点列：%w", err)
-		}
-	}
-	if err := tx.Exec("UPDATE ark_private_asset_bindings SET site = 'volcengine' WHERE site IS NULL OR site = ''").Error; err != nil {
-		return fmt.Errorf("回填素材绑定站点：%w", err)
-	}
-	if err := tx.Exec("DROP INDEX IF EXISTS idx_ark_private_asset_binding_resource_project").Error; err != nil {
-		return fmt.Errorf("删除旧素材绑定索引：%w", err)
-	}
-	if err := tx.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_ark_private_asset_binding_resource_project ON ark_private_asset_bindings (resource_id, project_name, site)").Error; err != nil {
-		return fmt.Errorf("重建素材绑定索引：%w", err)
-	}
-	return nil
+	return tx.Migrator().AddColumn(&model.ApiCallLog{}, "GenerationContentJSON")
 }
 
 // migrateReferenceVideoCostPrice 为价格档成本和账单成本快照增加带参考视频的成本价。
@@ -991,15 +1006,22 @@ func migrationsForDatabase(db *gorm.DB) ([]migration, error) {
 			}
 		}
 	}
-	// 已发布分支曾把共享钱包放在 58/61/73/78/79；保留记录身份，缺少的迁移放到 93。
+	// 已发布分支曾把共享钱包放在 58/61/73/78/79/93。93–95 在两条分支上也有不同身份。
 	var records []schemaMigration
-	if err := db.Where("version IN ?", []int64{58, 61, 73, 78, 79}).Find(&records).Error; err != nil {
+	if err := db.Where("version IN ?", []int64{58, 61, 73, 78, 79, 93, 94, 95}).Find(&records).Error; err != nil {
 		return nil, fmt.Errorf("读取分支迁移历史：%w", err)
 	}
-	walletVersion := int64(93)
+	walletVersion := int64(103)
+	appliedNames := make(map[int64]string, len(records))
 	for _, record := range records {
+		appliedNames[record.Version] = record.Name
 		if record.Name == "shared_wallet_billing" {
-			if walletVersion != 93 {
+			switch record.Version {
+			case 58, 61, 73, 78, 79, 93:
+			default:
+				return nil, fmt.Errorf("共享钱包迁移编号无效：%d", record.Version)
+			}
+			if walletVersion != 103 {
 				return nil, errors.New("共享钱包存在重复迁移记录")
 			}
 			walletVersion = record.Version
@@ -1027,34 +1049,41 @@ func migrationsForDatabase(db *gorm.DB) ([]migration, error) {
 		versions["drama_cast_voice_looks"] = 79
 		fallthrough
 	case 79:
-		versions["ecommerce_agent_and_knowledge"] = 93
+		versions["ecommerce_agent_and_knowledge"] = 103
+		if appliedNames[93] == "ecommerce_agent_and_knowledge" {
+			versions["ecommerce_agent_and_knowledge"] = 93
+		}
+	}
+	if walletVersion == 93 || versions["ecommerce_agent_and_knowledge"] == 93 {
+		versions["ecommerce_round_history"] = 103
+	}
+	if appliedNames[94] == "ark_asset_provider" {
+		versions["ark_asset_provider"] = 94
+		versions["drama_cast_styles_import"] = 104
+	}
+	if appliedNames[95] == "wantrace_assets" {
+		versions["wantrace_assets"] = 95
+		versions["ark_private_asset_binding_identity"] = 105
 	}
 	for index, item := range plan {
 		if version, ok := versions[item.name]; ok {
 			plan[index].version = version
 		}
 	}
-	sort.SliceStable(plan, func(i, j int) bool { return plan[i].version < plan[j].version })
-	if versions["drama_production"] == 73 {
-		// 短剧建表即使编号为 73，也必须先于依赖它的 62–71 执行。
-		var drama migration
-		for _, item := range plan {
-			if item.name == "drama_production" {
-				drama = item
+	sort.SliceStable(plan, func(i, j int) bool {
+		order := func(item migration) int64 {
+			switch item.name {
+			case "drama_production":
+				if item.version == 73 {
+					return 61 // 先于依赖短剧表的 62–71 执行。
+				}
+			case "ecommerce_agent_and_knowledge":
+				return 79 // 即使编号后移，也要先于后续电商迁移建表。
 			}
+			return item.version
 		}
-		ordered := make([]migration, 0, len(plan))
-		for _, item := range plan {
-			if item.name == drama.name {
-				continue
-			}
-			ordered = append(ordered, item)
-			if item.version == 61 {
-				ordered = append(ordered, drama)
-			}
-		}
-		plan = ordered
-	}
+		return order(plan[i]) < order(plan[j])
+	})
 	return plan, nil
 }
 
