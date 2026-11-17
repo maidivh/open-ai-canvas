@@ -18,7 +18,7 @@ func TestWechatMigrationSkipsMissingOAuthStateTable(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
 	for _, item := range schemaMigrations {
-		if item.version != 102 {
+		if item.version != 102 || item.name != "wechat_oauth" {
 			continue
 		}
 		for i := 0; i < 2; i++ {

@@ -4,8 +4,54 @@ import (
 	"fmt"
 	"testing"
 
+	"yingce/backend/internal/imagebilling"
 	"yingce/backend/internal/model"
 )
+
+func TestSharedWalletImageSettlementUsesActualOutput(t *testing.T) {
+	s, _, upstream, user := newSharedWalletTest(t)
+	order := &model.BillingOrder{
+		ID: "image-usage", UserID: user.ID, IdempotencyKey: "image-usage",
+		Capability: "image", BillingMode: imagebilling.Mode, Status: model.BillingStatusReserved,
+		Quantity: 2, ImageInputImages: 1, ImageMaxOutputImages: 2,
+		MultiplierBasisPoints: 10_000, AmountMicrocredits: 3_300_000,
+		ImagePricing: &model.ImagePricing{
+			InputPriceMicrocredits: 100_000,
+			OutputTiers:            []model.ImagePriceTier{{MaxPixels: 2_000_000, UnitPriceMicrocredits: 1_600_000}},
+		},
+	}
+	if err := s.repo.ReserveBillingOrder(order); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkBillingRunning(order.ID); err != nil {
+		t.Fatal(err)
+	}
+	if upstream.balance != 96 {
+		t.Fatalf("reservation did not round to four points: %d", upstream.balance)
+	}
+	if err := s.SettleBilling(order.ID, "image-provider"); err == nil || upstream.calls["settle"] != 0 {
+		t.Fatalf("missing image usage should block the external charge: %v", err)
+	}
+	usage := &model.ImageBillingUsage{InputImages: 1, Source: "provider", Outputs: []model.ImageOutputUsage{{Index: 0, Width: 1024, Height: 1024}}}
+	if err := s.repo.RecordImageBillingUsage(order.ID, usage); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := s.SettleBilling(order.ID, "image-provider"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	saved, err := s.repo.BillingOrder(order.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Status != model.BillingStatusSettled || saved.ActualAmountMicrocredits != 2*CreditScale || saved.RefundedAmountMicrocredits != 2*CreditScale || saved.Quantity != 1 {
+		t.Fatalf("unexpected image settlement: status=%s actual=%d refund=%d quantity=%d", saved.Status, saved.ActualAmountMicrocredits, saved.RefundedAmountMicrocredits, saved.Quantity)
+	}
+	if upstream.balance != 98 || upstream.calls["settle"] != 1 {
+		t.Fatalf("unexpected external charge: balance=%d calls=%d", upstream.balance, upstream.calls["settle"])
+	}
+}
 
 func TestSharedWalletVideoProcessingSettlesMeasuredDuration(t *testing.T) {
 	for _, test := range []struct {

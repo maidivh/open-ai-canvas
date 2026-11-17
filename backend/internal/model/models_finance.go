@@ -33,14 +33,18 @@ type CreditLedgerEntry struct {
 }
 
 type BillingOrder struct {
-	WalletMode             string     `json:"walletMode" gorm:"size:16;index"`
-	WalletVersion          int64      `json:"walletVersion"`
-	WalletState            string     `json:"walletState,omitempty" gorm:"size:20;index"`
-	WalletMemberID         int64      `json:"-"`
-	WalletOutputTokenLimit int64      `json:"-"`
-	WalletConfigJSON       string     `json:"-" gorm:"type:text"`
-	WalletLockToken        string     `json:"-" gorm:"size:36"`
-	WalletLockUntil        *time.Time `json:"-"`
+	WalletMode             string             `json:"walletMode" gorm:"size:16;index"`
+	WalletVersion          int64              `json:"walletVersion"`
+	WalletState            string             `json:"walletState,omitempty" gorm:"size:20;index"`
+	WalletMemberID         int64              `json:"-"`
+	WalletOutputTokenLimit int64              `json:"-"`
+	WalletConfigJSON       string             `json:"-" gorm:"type:text"`
+	WalletLockToken        string             `json:"-" gorm:"size:36"`
+	WalletLockUntil        *time.Time         `json:"-"`
+	ImagePricing           *ImagePricing      `json:"imagePricing,omitempty" gorm:"serializer:json;type:text"`
+	ImageUsage             *ImageBillingUsage `json:"imageUsage,omitempty" gorm:"serializer:json;type:text"`
+	ImageInputImages       int64              `json:"imageInputImages" gorm:"not null;default:0"`
+	ImageMaxOutputImages   int64              `json:"imageMaxOutputImages" gorm:"not null;default:0"`
 	BillingCostSnapshot    `json:"-" gorm:"embedded"`
 	ID                     string `json:"id" gorm:"primaryKey;size:36"`
 	UserID                 string `json:"userId" gorm:"size:36;index;uniqueIndex:idx_billing_user_idempotency,priority:1"`

@@ -12,6 +12,7 @@ import (
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"yingce/backend/internal/imagebilling"
 	"yingce/backend/internal/model"
 )
 
@@ -338,11 +339,28 @@ func (r *Repository) QueueWalletOperation(id, action string, duration *int64) (*
 		}
 		point := int64(0)
 		if action == "settle" || action == "restore" {
+			if order.CostBillingMode == imagebilling.Mode && order.CostPricing.Configured {
+				if _, err := imagebilling.Amount(order.CostPricing.ImagePricing, order.ImageUsage, 10_000); err != nil {
+					return err
+				}
+			}
 			actual := order.AmountMicrocredits
 			if order.Scene == "ecommerce_agent" {
 				var err error
 				actual, err = ecommerceWalletSettlementAmount(tx, &order)
 				if err != nil {
+					return err
+				}
+			} else if order.BillingMode == imagebilling.Mode {
+				var err error
+				actual, err = imagebilling.Amount(order.ImagePricing, order.ImageUsage, order.MultiplierBasisPoints)
+				if err != nil {
+					return err
+				}
+				if int64(len(order.ImageUsage.Outputs)) > order.ImageMaxOutputImages || order.ImageUsage.InputImages > order.ImageInputImages {
+					return ErrBillingChargeLimit
+				}
+				if err := tx.Model(&order).UpdateColumn("quantity", len(order.ImageUsage.Outputs)).Error; err != nil {
 					return err
 				}
 			} else if order.BillingMode == "token" && !zeroPricedTokenOrder(order) {

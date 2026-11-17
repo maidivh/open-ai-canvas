@@ -228,6 +228,7 @@ export function CreationComposer(props: ComposerProps) {
     const canSubmit = Boolean(props.prompt.trim()) && !interactionBusy && !settingsError;
     const creditsEnabled = useUserStore((state) => state.features.creditsEnabled);
     const walletMode = useUserStore((state) => state.features.walletMode);
+    const userId = useUserStore((state) => state.user?.id);
     const priceChannel = resolveModelChannel(props.config, props.model);
     // 图片报价按单张任务查询，再按与实际提交一致的拆单数合计。
     const generationTaskCount = props.mode === "image" ? Math.max(1, Math.min(imageBatchLimit, Math.floor(Number(props.count) || 1))) : 1;
@@ -247,7 +248,7 @@ export function CreationComposer(props: ComposerProps) {
         requirements: props.modelRequirements,
     });
     useEffect(() => {
-        if (!creditsEnabled || !quoteRequest) {
+        if (!userId || !creditsEnabled || !quoteRequest) {
             setRouteQuote(null);
             return;
         }
@@ -259,11 +260,11 @@ export function CreationComposer(props: ComposerProps) {
                 if (!controller.signal.aborted) setRouteQuote(null);
             });
         return () => controller.abort();
-    }, [creditsEnabled, walletMode, quoteRequest]);
+    }, [creditsEnabled, walletMode, quoteRequest, userId]);
     const generationCredits = routeQuote ? modelQuoteCredits(routeQuote, generationTaskCount) : credits;
     const showCost = creditsEnabled && generationCredits !== null && generationCredits !== undefined;
     const formattedCredits = generationCredits?.toLocaleString("zh-CN", { maximumFractionDigits: 6 });
-    const actionLabel = props.referenceReplacementBusy ? "正在替换参考图" : interactionBusy || (props.generationActive && !canSubmit) ? "生成中" : showCost ? `${routeQuote?.estimated ? "预估" : "消耗"} ${formattedCredits} 积分，发送` : "发送";
+    const actionLabel = props.referenceReplacementBusy ? "正在替换参考图" : interactionBusy || (props.generationActive && !canSubmit) ? "生成中" : showCost ? `${!userId || routeQuote?.estimated ? "预估" : "消耗"} ${formattedCredits} 积分，发送` : "发送";
     // Send-button working state must span the WHOLE generation (not just the
     // submit-lock window): spinner + glow stay while a message is pending and
     // the composer is empty; typing a next prompt returns the arrow so the

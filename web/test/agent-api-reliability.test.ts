@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentEvent, CreateAgentRunInput } from "../src/services/api/agent";
 import { getActiveUserScope, setActiveUserScope } from "../src/lib/user-scope";
+import { useUserStore } from "../src/stores/use-user-store";
 
 // Exercise the production protocol, isolating only transport/storage dependencies.
 // Temporary modules avoid mock.module leaking into unrelated Bun test suites.
@@ -16,11 +17,10 @@ writeFileSync(
     join(dir, "agent.ts"),
     readFileSync(new URL("services/api/agent.ts", root), "utf8")
         .replace('"@/services/api/request"', JSON.stringify(requestPath))
+        .replace('"@/lib/skill-access"', JSON.stringify(fileURLToPath(new URL("lib/skill-access.ts", root))))
         .replace('"@/lib/user-scope"', JSON.stringify(fileURLToPath(new URL("lib/user-scope.ts", root))))
         .replace('"@/services/api/task-text-stream"', JSON.stringify(fileURLToPath(new URL("services/api/task-text-stream.ts", root)))),
 );
-const api: typeof import("../src/services/api/agent") = await import(join(dir, "agent.ts"));
-const transport = await import(requestPath);
 const storagePath = join(dir, "storage.ts");
 writeFileSync(storagePath, "export const data = new Map(); export const localForageStorageForScope = () => ({ getItem: async (k) => data.get(k) ?? null, setItem: async (k,v) => {data.set(k,v);}, removeItem: async (k) => {data.delete(k);} });");
 writeFileSync(join(dir, "scope.ts"), 'export const getActiveUserScope = () => "test-user";');
@@ -32,13 +32,18 @@ writeFileSync(
         .replace('"@/lib/agent-page-context"', JSON.stringify(fileURLToPath(new URL("lib/agent-page-context.ts", root))))
         .replace('"@/lib/markdown-plain-text"', JSON.stringify(fileURLToPath(new URL("lib/markdown-plain-text.ts", root)))),
 );
+const api: typeof import("../src/services/api/agent") = await import(join(dir, "agent.ts"));
+const transport = await import(requestPath);
 const conversations: typeof import("../src/services/cloud-agent-conversations") = await import(join(dir, "conversations.ts"));
 const storage = await import(storagePath);
 const nativeFetch = globalThis.fetch;
 const nativeTimer = globalThis.setTimeout;
 let delays: number[] = [];
 let stops: Array<() => void> = [];
+let originalUser: ReturnType<typeof useUserStore.getState>;
 beforeEach(() => {
+    originalUser = useUserStore.getState();
+    useUserStore.setState({ hydrated: true, user: { id: "agent-reliability-user", username: "agent-reliability-user", displayName: "Agent 测试用户", role: "user", status: "active" } });
     delays = [];
     storage.data.clear();
     // Retain watchdog semantics; accelerate only retry waits, recording real delays.
@@ -48,6 +53,7 @@ beforeEach(() => {
     }) as typeof setTimeout;
 });
 afterEach(() => {
+    useUserStore.setState(originalUser);
     stops.forEach((stop) => stop());
     stops = [];
     globalThis.fetch = nativeFetch;
@@ -165,10 +171,27 @@ describe("Agent SSE recovery", () => {
         let requests = 0;
         globalThis.fetch = (async (_url, init) => {
             requests++;
-            return new Promise<Response>((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(new Error("timeout")), { once: true }));
+            return new Promise<Response>((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(new DOMException("The operation was aborted", "AbortError")), { once: true }));
         }) as typeof fetch;
-        expect(await observe({ timeoutMs: 10 }).done).toBeInstanceOf(Error);
+        const result = observe({ timeoutMs: 10 });
+        expect(await result.done).toMatchObject({ name: "AbortError" });
         expect(requests).toBe(5);
+        expect(result.statuses.at(-1)).toBe("disconnected");
+    });
+
+    it("reconnects after a watchdog AbortError and receives the terminal run state", async () => {
+        let requests = 0;
+        globalThis.fetch = (async (_url, init) => {
+            requests++;
+            if (requests === 1) return new Promise<Response>((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(new DOMException("The operation was aborted", "AbortError")), { once: true }));
+            return stream(snapshot("completed"));
+        }) as typeof fetch;
+        const result = observe({ timeoutMs: 10 });
+        await expect(result.done).resolves.toBeUndefined();
+        expect(requests).toBe(2);
+        expect(result.statuses).toContain("reconnecting");
+        expect(result.statuses.at(-1)).toBe("connected");
+        expect(result.events.filter((item) => item.type === "run_status").map((item) => item.payload.status)).toEqual(["completed"]);
     });
 
     it("unsubscribe aborts the live reader without reporting a run failure", async () => {
@@ -206,7 +229,8 @@ describe("Agent admission replay and durable pending records", () => {
             return { run: { id: "accepted" } };
         };
         expect(await api.createAgentRun(mutable)).toMatchObject({ run: { id: "accepted" } });
-        expect(bodies).toEqual([input, input, input]);
+        const expectedBody = { ...input, pinnedSkillIds: [] };
+        expect(bodies).toEqual([expectedBody, expectedBody, expectedBody]);
     });
 
     it("limits transport failures to three attempts, but never retries admission rejection", async () => {

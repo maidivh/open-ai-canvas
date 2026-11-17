@@ -127,10 +127,13 @@ func (r *Repository) CreditLedgerReferenceExists(referenceKey string) (bool, err
 	return count > 0, err
 }
 
-func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *model.BillingOrder, activeTaskLimit int) error {
+func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *model.BillingOrder, activeTaskLimit int, agentRunLimit ...int) error {
 	return r.Transaction(func(repo *Repository) error {
 		tx := repo.db
 		if _, err := lockSharedWallet(tx); err != nil {
+			return err
+		}
+		if err := enforceAgentRunLimit(tx, task, agentRunLimit); err != nil {
 			return err
 		}
 		if err := repo.requireCurrentCloudAgentParent(task); err != nil {
@@ -158,10 +161,13 @@ func (r *Repository) CreateTaskWithCreditReservation(task *model.Task, order *mo
 	})
 }
 
-func (r *Repository) CreateTaskWithActiveLimit(task *model.Task, activeTaskLimit int) error {
+func (r *Repository) CreateTaskWithActiveLimit(task *model.Task, activeTaskLimit int, agentRunLimit ...int) error {
 	return r.Transaction(func(repo *Repository) error {
 		tx := repo.db
 		if err := requireNonbillableTaskAdmission(tx, task); err != nil {
+			return err
+		}
+		if err := enforceAgentRunLimit(tx, task, agentRunLimit); err != nil {
 			return err
 		}
 		if err := repo.requireCurrentCloudAgentParent(task); err != nil {

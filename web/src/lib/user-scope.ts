@@ -1,10 +1,103 @@
 // [小洞免登定制] 导出原有存储键，供 AuthSessionHydrator 监听其他标签页发布的账号切换。
 export const ACTIVE_USER_SCOPE_KEY = "yingce:active-user-scope";
 const GUEST_SCOPE = "guest";
-// [小洞免登定制] 将上游「每次读取共享账号」改为「本标签持有账号」。
-// 其他标签改 localStorage 时，旧内存和延迟保存仍归属旧账号，直到本标签明确切换或重载。
-let activeTabScope: string | undefined;
 let userScopedPersistenceSuppressionDepth = 0;
+let activeUserScope = GUEST_SCOPE;
+let observedStorageScope = GUEST_SCOPE;
+let sessionVersion = 0;
+let sessionInvalidated = false;
+let sessionController = new AbortController();
+let sessionWindow: Window | undefined;
+let removeWindowListeners: (() => void) | undefined;
+let storageHintAvailable = true;
+const invalidationListeners = new Set<() => void>();
+
+export type UserSessionSnapshot = {
+    scope: string;
+    version: number;
+    signal: AbortSignal;
+};
+
+function readStorageScope() {
+    try {
+        return window.localStorage.getItem(ACTIVE_USER_SCOPE_KEY) || GUEST_SCOPE;
+    } catch {
+        return undefined;
+    }
+}
+
+function advanceSessionVersion() {
+    sessionVersion += 1;
+    sessionController.abort();
+    sessionController = new AbortController();
+}
+
+function observeStorageScope(scope: string | undefined) {
+    if (scope === undefined || scope === observedStorageScope) return;
+    observedStorageScope = scope;
+    // 只使旧标签失效，不接管它的内存数据。重新认证并清空内存后才能切换持久化 scope。
+    sessionInvalidated = true;
+    advanceSessionVersion();
+    for (const listener of invalidationListeners) listener();
+}
+
+function ensureSessionWindow() {
+    const browser = typeof window === "undefined" ? undefined : window;
+    if (sessionWindow === browser) return;
+    removeWindowListeners?.();
+    sessionWindow = browser;
+    advanceSessionVersion();
+    sessionInvalidated = false;
+    storageHintAvailable = true;
+    activeUserScope = browser ? (readStorageScope() ?? GUEST_SCOPE) : GUEST_SCOPE;
+    observedStorageScope = activeUserScope;
+    if (!browser?.addEventListener) return;
+    const onStorage = (event: StorageEvent) => {
+        if (event.key === ACTIVE_USER_SCOPE_KEY || event.key === null) {
+            observeStorageScope(event.key === null ? GUEST_SCOPE : event.newValue || GUEST_SCOPE);
+        }
+    };
+    const onFocus = () => observeStorageScope(readStorageScope());
+    browser.addEventListener("storage", onStorage);
+    browser.addEventListener("focus", onFocus);
+    browser.addEventListener("pageshow", onFocus);
+    removeWindowListeners = () => {
+        browser.removeEventListener("storage", onStorage);
+        browser.removeEventListener("focus", onFocus);
+        browser.removeEventListener("pageshow", onFocus);
+    };
+}
+
+function checkStorageScope() {
+    ensureSessionWindow();
+    if (sessionWindow && storageHintAvailable) observeStorageScope(readStorageScope());
+}
+
+function changedSessionError() {
+    return new DOMException("账号已切换，请等待当前账号恢复后重试", "AbortError");
+}
+
+export function subscribeUserSessionInvalidation(listener: () => void) {
+    ensureSessionWindow();
+    invalidationListeners.add(listener);
+    return () => invalidationListeners.delete(listener);
+}
+
+export function captureUserSession(allowInvalidated = false): UserSessionSnapshot {
+    checkStorageScope();
+    if (sessionInvalidated && !allowInvalidated) throw changedSessionError();
+    return { scope: activeUserScope, version: sessionVersion, signal: sessionController.signal };
+}
+
+export function assertCurrentUserSession(snapshot: UserSessionSnapshot, allowInvalidated = false) {
+    checkStorageScope();
+    if (snapshot.version !== sessionVersion || snapshot.signal.aborted || (sessionInvalidated && !allowInvalidated)) throw changedSessionError();
+}
+
+export function isUserSessionInvalidated() {
+    ensureSessionWindow();
+    return sessionInvalidated;
+}
 
 export function withUserScopedPersistenceSuppressed<T>(operation: () => T) {
     userScopedPersistenceSuppressionDepth += 1;
@@ -20,16 +113,26 @@ export function isUserScopedPersistenceSuppressed() {
 }
 
 export function getActiveUserScope() {
-    if (typeof window === "undefined") return GUEST_SCOPE;
-    // 首次读取沿用已有 scope；后续只由 setActiveUserScope 更新，防止旧草稿被写入新账号缓存。
-    return (activeTabScope ??= window.localStorage.getItem(ACTIVE_USER_SCOPE_KEY) || GUEST_SCOPE);
+    ensureSessionWindow();
+    return activeUserScope;
 }
 
-export function setActiveUserScope(userId?: string | null) {
-    if (typeof window === "undefined") return;
-    // 本标签完成会话切换时更新内存，再通知其他标签；storage 事件不会回传给写入者自己。
-    activeTabScope = userId || GUEST_SCOPE;
-    window.localStorage.setItem(ACTIVE_USER_SCOPE_KEY, activeTabScope);
+export function setActiveUserScope(userId?: string | null, expectedSession?: UserSessionSnapshot) {
+    ensureSessionWindow();
+    if (expectedSession) assertCurrentUserSession(expectedSession, true);
+    const scope = userId || GUEST_SCOPE;
+    if (activeUserScope !== scope || sessionInvalidated) advanceSessionVersion();
+    activeUserScope = scope;
+    observedStorageScope = scope;
+    sessionInvalidated = false;
+    if (!sessionWindow) return;
+    try {
+        window.localStorage.setItem(ACTIVE_USER_SCOPE_KEY, scope);
+        storageHintAvailable = true;
+    } catch {
+        // 禁用或写满 localStorage 时，本标签仍以已认证的内存身份为准。
+        storageHintAvailable = false;
+    }
 }
 
 /** [小洞免登定制] JSON 与模型请求共用页面账号头；它只用于防串号，认证仍由 HttpOnly Cookie 完成。 */

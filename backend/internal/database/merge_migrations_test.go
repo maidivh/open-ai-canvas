@@ -9,6 +9,63 @@ import (
 	"yingce/backend/internal/model"
 )
 
+func TestMergedSchemaPreservesBothVersion105Histories(t *testing.T) {
+	for _, lineage := range []string{"development", "main"} {
+		t.Run(lineage, func(t *testing.T) {
+			db, err := Open(Config{Driver: "sqlite", DSN: filepath.Join(t.TempDir(), "merge-105.db")})
+			if err != nil {
+				t.Fatal(err)
+			}
+			sqlDB, err := db.DB()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = sqlDB.Close() })
+			if err := db.AutoMigrate(&schemaMigration{}); err != nil {
+				t.Fatal(err)
+			}
+			var before []schemaMigration
+			for _, item := range schemaMigrations {
+				if item.version > 102 {
+					if lineage == "main" && item.version >= 106 {
+						item.version -= 3
+					} else if lineage == "main" || item.version > 105 {
+						continue
+					}
+				}
+				if err := item.apply(db); err != nil {
+					t.Fatalf("seed %s: %v", item.name, err)
+				}
+				row := schemaMigration{Version: item.version, Name: item.name, Checksum: item.checksum, AppliedAt: time.Unix(1_790_000_000, 0).UTC()}
+				if err := db.Create(&row).Error; err != nil {
+					t.Fatal(err)
+				}
+				before = append(before, row)
+			}
+			for range 2 {
+				if err := MigrateSchema(db); err != nil {
+					t.Fatal(err)
+				}
+				var rows []schemaMigration
+				if err := db.Order("version").Find(&rows).Error; err != nil {
+					t.Fatal(err)
+				}
+				if len(rows) != len(before)+3 || rows[len(rows)-1].Version != 108 || !reflect.DeepEqual(rows[:len(before)], before) {
+					t.Fatalf("previous migration history changed or schema 108 incomplete: %d records", len(rows))
+				}
+				for _, table := range []any{&model.WalletOperation{}, &model.WantraceAsset{}, &model.MCPConnectionGrant{}, &model.AgentStorageUsage{}} {
+					if !db.Migrator().HasTable(table) {
+						t.Fatalf("missing %T", table)
+					}
+				}
+				if !db.Migrator().HasColumn(&model.BillingOrder{}, "ImageUsage") {
+					t.Fatal("missing image billing usage")
+				}
+			}
+		})
+	}
+}
+
 func TestMergedSchemaPreservesPublishedHistories(t *testing.T) {
 	for _, history := range []struct {
 		name       string

@@ -4,6 +4,7 @@ import "yingce/backend/internal/app"
 
 type AgentAvatarBundleManifest = app.AgentAvatarBundleManifest
 type AgentAvatarBundleImport = app.AgentAvatarBundleImport
+type Live2DImport = app.Live2DImport
 
 const (
 	WorkbenchKindImage = app.WorkbenchKindImage
@@ -302,12 +303,14 @@ type (
 	PublicModelChannel                     = app.PublicModelChannel
 	PublicOSSSetting                       = app.PublicOSSSetting
 	PublicRegistrationSetting              = app.PublicRegistrationSetting
+	PublicTurnstileSetting                 = app.PublicTurnstileSetting
 	PublicRuntimeLimits                    = app.PublicRuntimeLimits
 	PublicRuntimePolicySetting             = app.PublicRuntimePolicySetting
 	RedeemBatchPage                        = app.RedeemBatchPage
 	RegisterRequest                        = app.RegisterRequest
 	RegisterTaskOutputRequest              = app.RegisterTaskOutputRequest
 	RegistrationSettingRequest             = app.RegistrationSettingRequest
+	TurnstileSettingRequest                = app.TurnstileSettingRequest
 	ReorderProjectUnitsRequest             = app.ReorderProjectUnitsRequest
 	ReplaceCharacterRepresentationsRequest = app.ReplaceCharacterRepresentationsRequest
 	ReplaceProjectUnitShotInput            = app.ReplaceProjectUnitShotInput
@@ -426,6 +429,7 @@ type (
 	VideoReferenceConfig                   = app.VideoReferenceConfig
 	VoiceProfileSummary                    = app.VoiceProfileSummary
 	WalletSummary                          = app.WalletSummary
+	WalletHistorySummary                   = app.WalletHistorySummary
 	WorkflowField                          = app.WorkflowField
 )
 

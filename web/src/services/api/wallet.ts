@@ -50,11 +50,33 @@ export type CreditLedgerEntry = {
     createdAt: string;
 };
 
+export type WalletBillingEntry = {
+    id: string;
+    type: "billing";
+    billingOrderId: string;
+    billingStatus: "reserved" | "running" | "settled" | "refunded" | "uncertain";
+    reservedMicrocredits: number;
+    chargedMicrocredits: number;
+    refundedMicrocredits: number;
+    model?: string;
+    scene?: string;
+    note?: string;
+    createdAt: string;
+};
+
+export type WalletCreditEntry = Pick<CreditLedgerEntry, "id" | "type" | "amountMicrocredits" | "model" | "scene" | "note" | "createdAt"> & {
+    paymentProviderId?: string;
+    paymentProviderName?: string;
+};
+
+export type WalletHistoryEntry = WalletBillingEntry | WalletCreditEntry;
+export type WalletHistoryType = "all" | "income" | "expenses" | "consume" | "refund";
+
 export type WalletSummary = {
     walletMode?: WalletMode;
     rechargeUrl?: string;
     account: CreditAccount;
-    entries: CreditLedgerEntry[];
+    entries: WalletHistoryEntry[];
     total: number;
     page: number;
     pageSize: number;
@@ -85,7 +107,7 @@ export type ChannelModel = {
     icon: string;
     capability: "text" | "image" | "video" | "audio" | "";
     protocol?: import("@/lib/model-protocols").ModelProtocol;
-    billingMode: "fixed_request" | "per_second" | "token";
+    billingMode: "fixed_request" | "per_second" | "token" | "image_usage";
     unitPriceMicrocredits: number;
     inputTokenPriceMicrocredits: number;
     outputTokenPriceMicrocredits: number;
@@ -106,6 +128,7 @@ export type ChannelModel = {
 };
 
 export type ChannelModelPriceTier = {
+    imagePricing?: ImagePricing | null;
     /** 仅管理员模型编辑接口返回，不能复制到用户模型目录。 */
     costPricing?: CreditCostPricing;
     id: string;
@@ -115,7 +138,7 @@ export type ChannelModelPriceTier = {
     resolution: string;
     videoSeconds: number;
     providerModelKey: string;
-    billingMode: "fixed_request" | "per_second" | "token";
+    billingMode: ChannelModel["billingMode"];
     unitPriceMicrocredits: number;
     inputTokenPriceMicrocredits: number;
     outputTokenPriceMicrocredits: number;
@@ -157,6 +180,7 @@ export type TokenPriceRule = {
 };
 
 export type CreditCostPricing = {
+    imagePricing?: ImagePricing | null;
     configured: boolean;
     unitPriceMicrocredits: number;
     inputTokenPriceMicrocredits: number;
@@ -166,6 +190,12 @@ export type CreditCostPricing = {
     /** 带参考视频的成本价：按秒档为每秒成本，视频 Token 档为 Token 成本；模型未开启参考视频计费时不生效。 */
     referenceVideoUnitPriceMicrocredits?: number;
     referenceVideoOutputTokenPriceMicrocredits?: number;
+};
+
+export type ImagePricing = {
+    inputPriceMicrocredits: number;
+    freeInputImages: number;
+    outputTiers: Array<{ maxPixels: number; unitPriceMicrocredits: number }>;
 };
 
 // 系统渠道模型的写入合同。标量价格只用于兼容旧管理请求；新的后台界面只提交 priceTiers。
@@ -288,6 +318,10 @@ export type BillingOrder = {
     walletMode?: WalletMode | "";
     walletVersion?: number;
     walletState?: "pending" | "reserved" | "settled" | "refunded" | "rejected" | "";
+    imagePricing?: ImagePricing | null;
+    imageUsage?: { inputImages: number; outputs: Array<{ index: number; width: number; height: number }>; source: string } | null;
+    imageInputImages?: number;
+    imageMaxOutputImages?: number;
     id: string;
     userId: string;
     /** 仅管理端计费核对列表返回。 */
@@ -298,7 +332,7 @@ export type BillingOrder = {
     model: string;
     capability: string;
     scene: string;
-    billingMode: "fixed_request" | "per_second" | "token";
+    billingMode: ChannelModel["billingMode"];
     unitPriceMicrocredits: number;
     multiplierBasisPoints: number;
     quantity: number;
@@ -317,7 +351,7 @@ export type BillingOrder = {
     cacheWriteTokens?: number;
     usageAvailable: boolean;
     videoFormulaTokens?: number;
-    usageSource?: "provider" | "video_formula";
+    usageSource?: "provider" | "video_formula" | "provider_and_request" | "provider_and_media";
     status: "reserved" | "running" | "settled" | "refunded" | "uncertain";
     providerRequestId?: string;
     error?: string;
@@ -327,7 +361,7 @@ export type BillingOrder = {
     updatedAt: string;
 };
 
-export function getWallet(page = 1, pageSize = 30, type = "all", signal?: AbortSignal) {
+export function getWallet(page = 1, pageSize = 30, type: WalletHistoryType = "all", signal?: AbortSignal) {
     return http.get<WalletSummary>("/wallet", { params: { type, page, pageSize }, signal });
 }
 
