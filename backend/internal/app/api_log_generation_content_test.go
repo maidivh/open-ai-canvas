@@ -94,8 +94,54 @@ func TestGenerationSnapshotVerifiesArkOriginalBinding(t *testing.T) {
 			t.Fatalf("%+v: original=%q", tc, got)
 		}
 	}
-	if got := s.generationOriginalResourceID("owner", providerMedia{URL: "https://external.invalid/file", SourceResourceID: "original"}); got != "" {
+	if got := s.generationOriginalResourceID("owner", providerMedia{URL: "https://external.invalid/file", SourceResourceID: "original"}, false); got != "" {
 		t.Fatalf("unverified source accepted: %q", got)
+	}
+}
+
+func TestGenerationSnapshotVerifiesWantraceOriginalBinding(t *testing.T) {
+	s, db := generationLogService(t)
+	original := generationLogResource(t, s, db, "wantrace-original", "owner", "image")
+	other := generationLogResource(t, s, db, "other-image", "owner", "image")
+	const uri = "asset://approved"
+	if err := db.Create(&model.WantraceAsset{ID: "approved", UserID: "owner", ResourceID: original.ID, AssetURI: uri, Status: "Active"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.WantraceAsset{ID: "pending", UserID: "owner", ResourceID: original.ID, AssetURI: "asset://pending", Status: "Processing"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.ArkPrivateAssetBinding{ID: "ark-binding", UserID: "owner", ResourceID: other.ID, ProjectName: "project", ArkAssetID: "approved", Status: "active"}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	input := canvasGenerationInput{
+		Mode: "video", Config: providerConfig{BaseURL: "https://newapi.wantrace.com"},
+		ReferenceImages: []providerMedia{{URL: uri, SourceResourceID: original.ID}},
+	}
+	snapshot := s.generationSnapshot("owner", "attempt", input)
+	if snapshot.Incomplete || snapshot.References[0].ResourceID != original.ID {
+		t.Fatalf("approved reference lost: %+v", snapshot)
+	}
+	for _, tc := range []struct{ name, userID, uri, source string }{
+		{"different resource with a matching domestic asset ID", "owner", uri, other.ID},
+		{"different user", "other-user", uri, original.ID},
+		{"pending asset", "owner", "asset://pending", original.ID},
+		{"unverified resource hint", "owner", "asset://unknown", original.ID},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			badInput := input
+			badInput.ReferenceImages = []providerMedia{{URL: tc.uri, SourceResourceID: tc.source}}
+			got := s.generationSnapshot(tc.userID, "attempt", badInput)
+			if !got.Incomplete || got.References[0].ResourceID != "" {
+				t.Fatalf("unverified reference kept: %+v", got)
+			}
+		})
+	}
+	if err := s.LogAPICall(model.ApiCallLog{ID: "wantrace-log", UserID: "owner", Capability: "video", RequestKind: "create", GenerationContentJSON: encodeGenerationSnapshot(snapshot)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.repo.DeleteDetachedResources([]model.Resource{original}, nil); !errors.Is(err, repository.ErrResourceCleanupStillReferenced) {
+		t.Fatalf("log did not protect the original: %v", err)
 	}
 }
 

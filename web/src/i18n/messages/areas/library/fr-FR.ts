@@ -465,7 +465,8 @@ export const frFR: DeepStringRecord<typeof zhCN> = {
             verified: "Vérification terminée",
             failed: "Échec de la vérification",
             uncertain: "Statut à confirmer",
-            expired: "La vérification a expiré. Veuillez recommencer.",        },
+            expired: "La vérification a expiré. Veuillez recommencer.",
+        },
         title: "Bibliothèque Ark",
         description:
             "Les groupes de ressources sont hébergés dans le compte Ark de la plateforme. Les images approuvées rejoignent automatiquement la catégorie « Certifié Ark » de votre bibliothèque et sont référencées directement lors d'une génération avec un modèle vidéo Ark sur le canevas.",

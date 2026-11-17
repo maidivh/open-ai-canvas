@@ -230,10 +230,17 @@ describe("Agent admission replay and durable pending records", () => {
         const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
         const previousScope = getActiveUserScope();
         let scope = "original-account";
-        Object.defineProperty(globalThis, "window", { configurable: true, value: { localStorage: {
-            getItem: () => scope,
-            setItem: (_key: string, value: string) => { scope = value; },
-        } } });
+        Object.defineProperty(globalThis, "window", {
+            configurable: true,
+            value: {
+                localStorage: {
+                    getItem: () => scope,
+                    setItem: (_key: string, value: string) => {
+                        scope = value;
+                    },
+                },
+            },
+        });
         setActiveUserScope("original-account");
         let attempts = 0;
         transport.http.post = async () => {

@@ -465,7 +465,8 @@ export const deDE: DeepStringRecord<typeof zhCN> = {
             verified: "Verifizierung abgeschlossen",
             failed: "Verifizierung fehlgeschlagen",
             uncertain: "Status unklar",
-            expired: "Die Verifizierung ist abgelaufen. Bitte erneut starten.",        },
+            expired: "Die Verifizierung ist abgelaufen. Bitte erneut starten.",
+        },
         title: "Ark-Assetbibliothek",
         description:
             "Asset-Gruppen liegen im Ark-Konto der Plattform. Freigegebene Bilder landen automatisch in der Kategorie „Ark-zertifiziert“ deiner Bibliothek und werden bei der Generierung mit einem Ark-Videomodell auf der Leinwand direkt referenziert.",

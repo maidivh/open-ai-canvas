@@ -291,7 +291,7 @@ export const zhCN = {
             preferences: { label: "偏好设置", description: "外观、语言、通知与生成默认值" },
             prompts: { label: "提示词偏好", description: "按任务定制平台模板" },
             "agent-memory": { label: "Agent 记忆", description: "批准、添加、导出导入、压缩" },
-            "ark-assets": { label: "方舟素材库", description: "真人认证、虚拟与授权素材组" },
+            "ark-assets": { label: "真人素材库", description: "真人认证、虚拟与授权素材组" },
             storage: { label: "我的对象存储", description: "管理个人媒体存储" },
             diagnostics: { label: "问题诊断", description: "导出日志协助排查" },
             feedbacks: { label: "我的反馈", description: "提交问题、建议与官方答复" },

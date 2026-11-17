@@ -81,6 +81,7 @@ func (s *Service) generationSnapshot(userID, seed string, input canvasGeneration
 	}{
 		{"image", "图片", input.ReferenceImages}, {"video", "视频", input.ReferenceVideos}, {"audio", "音频", input.ReferenceAudios},
 	}
+	wantrace := isWantraceAssetChannelBaseURL(input.Config.BaseURL)
 	for _, group := range groups {
 		for i, media := range group.media {
 			if len(snapshot.References) >= maxGenerationReferences {
@@ -95,7 +96,7 @@ func (s *Service) generationSnapshot(userID, seed string, input canvasGeneration
 			if media.Role == "reference" || media.Role == "first_frame" || media.Role == "last_frame" {
 				ref.Role = media.Role
 			}
-			ref.ResourceID = s.generationOriginalResourceID(userID, media)
+			ref.ResourceID = s.generationOriginalResourceID(userID, media, wantrace)
 			if ref.ResourceID != "" {
 				resource, err := s.repo.ResourceForUser(userID, ref.ResourceID)
 				if err != nil || resource.Status != model.ResourceStatusReady || !strings.HasPrefix(strings.ToLower(resource.MimeType), group.kind+"/") {
@@ -112,18 +113,24 @@ func (s *Service) generationSnapshot(userID, seed string, input canvasGeneration
 	return snapshot
 }
 
-func (s *Service) generationOriginalResourceID(userID string, media providerMedia) string {
+func (s *Service) generationOriginalResourceID(userID string, media providerMedia, wantrace bool) string {
 	if strings.HasPrefix(media.URL, "asset://") {
-		// sourceResourceId is only a hint; a matching owner/resource/Ark binding
-		// must prove which original was used. Never infer it from a node ID.
+		// The source hint must match an approved binding from the request's provider.
 		resourceID := validCanvasResourceID(media.SourceResourceID)
 		if resourceID == "" && strings.HasPrefix(media.StorageKey, "resource:") {
 			resourceID = validCanvasResourceID(strings.TrimPrefix(media.StorageKey, "resource:"))
 		}
-		if resourceID != "" {
-			if verified, err := s.repo.HasArkPrivateAssetResourceBinding(userID, resourceID, strings.TrimPrefix(media.URL, "asset://")); err == nil && verified {
+		if resourceID == "" {
+			return ""
+		}
+		if wantrace {
+			if asset, err := s.repo.WantraceAssetByURI(userID, media.URL); err == nil && asset.ResourceID == resourceID {
 				return resourceID
 			}
+			return ""
+		}
+		if verified, err := s.repo.HasArkPrivateAssetResourceBinding(userID, resourceID, strings.TrimPrefix(media.URL, "asset://")); err == nil && verified {
+			return resourceID
 		}
 		return ""
 	}

@@ -302,7 +302,14 @@ export function WantraceAssetsPane() {
 
                 <section className="ark-pane-main">
                     {session ? (
-                        <SessionCard session={session} working={working === "check"} onCopy={() => copyText(session.h5Link || "", t("library.ark.wantrace.copied"))} onCheck={() => void checkNow()} onClose={() => setSession(null)} onRestart={() => restart(session.name)} />
+                        <SessionCard
+                            session={session}
+                            working={working === "check"}
+                            onCopy={() => copyText(session.h5Link || "", t("library.ark.wantrace.copied"))}
+                            onCheck={() => void checkNow()}
+                            onClose={() => setSession(null)}
+                            onRestart={() => restart(session.name)}
+                        />
                     ) : composerOpen ? (
                         <div className="ark-composer">
                             <header className="ark-composer-head">
