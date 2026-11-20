@@ -93,6 +93,7 @@ type providerAnalyticsContext struct {
 	VideoSeconds          int
 	RequestKind           string
 	ProviderRequestID     string
+	ProtocolReceipt       *protocolHTTPReceipt
 	ConcurrencyLimit      int
 	GenerationContentJSON string
 }

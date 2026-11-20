@@ -1,3 +1,5 @@
+import { workspaceTeamId } from "./workspace-routes";
+
 // [小洞免登定制] 导出原有存储键，供 AuthSessionHydrator 监听其他标签页发布的账号切换。
 export const ACTIVE_USER_SCOPE_KEY = "yingce:active-user-scope";
 const GUEST_SCOPE = "guest";
@@ -13,6 +15,7 @@ let storageHintAvailable = true;
 const invalidationListeners = new Set<() => void>();
 
 export type UserSessionSnapshot = {
+    userId: string;
     scope: string;
     version: number;
     signal: AbortSignal;
@@ -86,7 +89,7 @@ export function subscribeUserSessionInvalidation(listener: () => void) {
 export function captureUserSession(allowInvalidated = false): UserSessionSnapshot {
     checkStorageScope();
     if (sessionInvalidated && !allowInvalidated) throw changedSessionError();
-    return { scope: activeUserScope, version: sessionVersion, signal: sessionController.signal };
+    return { scope: getActiveUserScope(), userId: activeUserScope, version: sessionVersion, signal: sessionController.signal };
 }
 
 export function assertCurrentUserSession(snapshot: UserSessionSnapshot, allowInvalidated = false) {
@@ -114,7 +117,7 @@ export function isUserScopedPersistenceSuppressed() {
 
 export function getActiveUserScope() {
     ensureSessionWindow();
-    return activeUserScope;
+    return workspaceTeamId ? `${activeUserScope}:team:${workspaceTeamId}` : activeUserScope;
 }
 
 export function setActiveUserScope(userId?: string | null, expectedSession?: UserSessionSnapshot) {
@@ -137,8 +140,8 @@ export function setActiveUserScope(userId?: string | null, expectedSession?: Use
 
 /** [小洞免登定制] JSON 与模型请求共用页面账号头；它只用于防串号，认证仍由 HttpOnly Cookie 完成。 */
 export function userScopeHeaders(): Record<string, string> {
-    const scope = getActiveUserScope();
-    return scope === GUEST_SCOPE ? {} : { "X-Canvas-User-ID": scope };
+    ensureSessionWindow();
+    return activeUserScope === GUEST_SCOPE ? {} : { "X-Canvas-User-ID": activeUserScope };
 }
 
 export function scopedStorageKey(name: string, scope = getActiveUserScope()) {

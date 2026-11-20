@@ -5,11 +5,10 @@ import { getAuthSession, invalidateAuthSessionCache } from "@/services/api/auth"
 import { FullScreenLoader } from "@/components/ui/aceternity/full-screen-loader";
 import { WorkspaceErrorState } from "@/components/layout/workspace-state";
 import { appQueryClient } from "@/lib/query-client";
-import { assertCurrentUserSession, captureUserSession, isUserSessionInvalidated, subscribeUserSessionInvalidation } from "@/lib/user-scope";
+import { ACTIVE_USER_SCOPE_KEY, assertCurrentUserSession, captureUserSession, isUserSessionInvalidated, subscribeUserSessionInvalidation } from "@/lib/user-scope";
 import { preloadWorkspaceRoute } from "@/lib/workspace-route-modules";
 import { useUserStore } from "@/stores/use-user-store";
 import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
-import { ACTIVE_USER_SCOPE_KEY, getActiveUserScope } from "@/lib/user-scope";
 
 export function AuthSessionHydrator({ children }: { children: ReactNode }) {
     const hydrated = useUserStore((state) => state.hydrated);
@@ -22,7 +21,7 @@ export function AuthSessionHydrator({ children }: { children: ReactNode }) {
         // 重载前的请求仍由页面账号头拦截；本地延迟保存仍由 user-scope.ts 固定到旧账号。
         const onAccountChanged = (event: StorageEvent) => {
             if (event.storageArea !== window.localStorage || (event.key !== ACTIVE_USER_SCOPE_KEY && event.key !== null)) return;
-            if (event.key !== null && event.newValue === getActiveUserScope()) return;
+            if (event.key !== null && event.newValue === captureUserSession(true).userId) return;
             const target = window.location.pathname.startsWith("/projects") ? "/projects" : "/canvas";
             window.location.replace(target);
         };

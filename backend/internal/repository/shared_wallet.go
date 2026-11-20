@@ -164,6 +164,9 @@ func prepareSharedWalletAdmission(tx *gorm.DB, order *model.BillingOrder) (bool,
 	if cfg.Mode != "external" {
 		return false, nil
 	}
+	if order.TeamID != "" {
+		return false, ErrTeamWalletExternal
+	}
 	if cfg.BaseURL == "" || cfg.SecretCipher == "" || cfg.ClientID == "" || cfg.SiteID <= 0 || cfg.Issuer == "" {
 		return false, errors.New("外部钱包配置不完整")
 	}

@@ -38,6 +38,7 @@ export type FeatureAvailability = {
     creditsEnabled: boolean;
     walletMode?: "internal" | "external";
     rechargeUrl?: string;
+    teamsEnabled: boolean;
     customChannelsEnabled: boolean;
     frontendModelsEnabled: boolean;
     pluginCenterEnabled: boolean;
@@ -57,6 +58,7 @@ export const defaultFeatureAvailability: FeatureAvailability = {
     shortDramaEnabled: true,
     taskCenterEnabled: true,
     creditsEnabled: true,
+    teamsEnabled: false,
     customChannelsEnabled: true,
     frontendModelsEnabled: false,
     pluginCenterEnabled: true,

@@ -4,11 +4,13 @@ import { useEffect } from "react";
 import { getWallet, type WalletSummary } from "@/services/api/wallet";
 import { refreshFeatureAvailability } from "@/services/feature-availability";
 import { useUserStore } from "@/stores/use-user-store";
+import { getTeamWallet } from "@/services/api/teams";
+import { workspaceTeamId } from "@/lib/workspace-routes";
 
 // 多处余额共用按登录会话隔离的 Query。功能关闭时仍在进入/唤醒/钱包事件后检查功能
 // 状态，才能发现服务端切换到外部钱包；不为常驻布局增加轮询。
 const WALLET_STALE_TIME_MS = 5 * 60_000;
-const walletBalanceQueryKey = (userId: string, sessionVersion: number) => ["wallet-balance", userId, sessionVersion] as const;
+const walletBalanceQueryKey = (userId: string, sessionVersion: number) => (workspaceTeamId ? (["wallet-balance", userId, sessionVersion, workspaceTeamId] as const) : (["wallet-balance", userId, sessionVersion] as const));
 const walletRefreshSubscriptions = new WeakMap<QueryClient, Map<number, { consumers: number; dispose: () => void }>>();
 
 function subscribeWalletRefresh(queryClient: QueryClient, userId: string, sessionVersion: number) {
@@ -50,7 +52,7 @@ function subscribeWalletRefresh(queryClient: QueryClient, userId: string, sessio
         // 公共设置可能在此页没有余额消费者时更新；不能沿用仍 fresh 的旧模式缓存。
         const cached = queryClient.getQueryData<WalletSnapshot>(queryKey);
         const features = useUserStore.getState().features;
-        if (cached && (cached.walletMode !== (features.walletMode || "internal") || (cached.policy !== null) !== features.creditsEnabled)) handleUpdated();
+        if (!workspaceTeamId && cached && (cached.walletMode !== (features.walletMode || "internal") || (cached.policy !== null) !== features.creditsEnabled)) handleUpdated();
     }
     const registered = subscription;
     registered.consumers += 1;
@@ -87,6 +89,13 @@ export function useWalletBalance(userId?: string, enabled = true) {
             signal.throwIfAborted();
             if (useUserStore.getState().sessionVersion !== sessionVersion) throw new DOMException("用户已切换", "AbortError");
             if (!features.creditsEnabled) return { availableMicrocredits: null, policy: null, walletMode: features.walletMode || "internal", rechargeUrl: features.rechargeUrl };
+            if (workspaceTeamId) {
+                const { myAccount } = await getTeamWallet(workspaceTeamId, signal);
+                signal.throwIfAborted();
+                if (useUserStore.getState().sessionVersion !== sessionVersion) throw new DOMException("用户已切换", "AbortError");
+                if (myAccount.teamId !== workspaceTeamId || myAccount.kind !== "team_member" || !myAccount.membershipId) throw new Error("团队积分账户与当前空间不一致");
+                return { availableMicrocredits: myAccount.availableMicrocredits, policy: null, walletMode: "internal" };
+            }
             const wallet = await getWallet(1, 1, "all", signal);
             signal.throwIfAborted();
             if (wallet.account.userId !== activeUserId) throw new Error("积分账户与当前用户不一致");
@@ -114,13 +123,13 @@ export function useWalletBalance(userId?: string, enabled = true) {
         if (query.error) console.warn("积分余额刷新失败", query.error);
     }, [query.error]);
 
-    const walletMode = publicMode ?? query.data?.walletMode ?? "internal";
+    const walletMode = workspaceTeamId ? "internal" : (publicMode ?? query.data?.walletMode ?? "internal");
     const available = enabled && activeUserId && !query.isError && query.data?.walletMode === walletMode;
     return {
         availableMicrocredits: available ? (query.data?.availableMicrocredits ?? null) : null,
         policy: available ? (query.data?.policy ?? null) : null,
         walletMode,
-        rechargeUrl: publicRechargeUrl ?? query.data?.rechargeUrl,
+        rechargeUrl: workspaceTeamId ? undefined : (publicRechargeUrl ?? query.data?.rechargeUrl),
         error: query.error,
         refreshing: query.isFetching,
         refresh: query.refetch,

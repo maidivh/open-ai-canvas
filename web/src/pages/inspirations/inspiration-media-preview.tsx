@@ -9,11 +9,13 @@ export function InspirationMediaPreview({ item, showSourceLink }: { item: Creati
     const videoUrl = item.mode === "video" && /^https?:\/\//i.test(item.videoUrl ?? "") ? item.videoUrl : undefined;
 
     return (
-        <div className="relative shrink-0 overflow-hidden" style={{ borderRadius: "var(--r-xl)", background: "var(--user-surface-muted)" }}>
+        <div className="inspiration-detail-cover flex-col">
             {videoUrl && !failed ? (
-                <video className="block h-56 max-h-[36vh] w-full object-contain sm:h-64" src={videoUrl} poster={item.image} controls playsInline preload="none" aria-label={`${item.title} 视频预览`} onError={() => setFailed(true)} />
+                <video className="block min-h-0 max-h-full w-full object-contain" src={videoUrl} poster={item.image} controls playsInline preload="none" aria-label={`${item.title} 视频预览`} onError={() => setFailed(true)} />
+            ) : coverFailed ? (
+                <MediaPlaceholder failed />
             ) : (
-                <div className="inspiration-detail-cover">{coverFailed ? <MediaPlaceholder failed /> : <img src={item.image} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setCoverFailed(true)} />}</div>
+                <img className="min-h-0" src={item.image} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setCoverFailed(true)} />
             )}
             {item.mode === "video" ? (
                 <p className="px-5 py-2 text-xs text-foreground/60" role={failed ? "status" : undefined}>

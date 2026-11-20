@@ -10,6 +10,20 @@ import (
 	"yingce/backend/internal/model"
 )
 
+func TestSharedWalletSpaceOverviewReadsExternalBalance(t *testing.T) {
+	s, db, _, user := newSharedWalletTest(t)
+	if err := db.AutoMigrate(&model.Team{}, &model.TeamMembership{}); err != nil {
+		t.Fatal(err)
+	}
+	overview, err := s.MySpaceCreditOverview(user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overview.Personal.AvailableMicrocredits != 100*CreditScale || overview.Personal.ReservedMicrocredits != 0 {
+		t.Fatalf("unexpected external personal balance: %+v", overview.Personal)
+	}
+}
+
 func TestSharedWalletSettingsIdentityMismatchIsActionable(t *testing.T) {
 	for _, name := range []string{"issuer_trailing_slash", "wrong_site", "no_binding"} {
 		t.Run(name, func(t *testing.T) {

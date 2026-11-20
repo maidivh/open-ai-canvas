@@ -553,7 +553,7 @@ func TestSharedWalletRouteSwitchPreservesExternalReservation(t *testing.T) {
 	db.Model(&model.BillingOrder{}).Where("id = ?", o.ID).Update("task_id", "route-task")
 	db.Create(&model.Task{ID: "route-task", UserID: "member", Status: model.TaskStatusRunning, RouteID: "old"})
 	replacement := &model.BillingOrder{UserID: "member", TaskID: "route-task", BillingMode: "fixed_request", AmountMicrocredits: 2000000}
-	if err := s.repo.SwitchTaskLogicalRoute("route-task", "old", "new", "{}", o.ID, "channel", "model", replacement, model.BillingCostSnapshot{}); err != nil {
+	if err := s.repo.SwitchTaskLogicalRoute("route-task", "old", "new", "{}", o.ID, "channel", "model", replacement, model.BillingCostSnapshot{}, ""); err != nil {
 		t.Fatal(err)
 	}
 	account, _ := s.repo.CreditAccount("member")

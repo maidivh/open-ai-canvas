@@ -9,10 +9,23 @@ import (
 	"yingce/backend/internal/model"
 )
 
-func TestMergedSchemaPreservesBothVersion105Histories(t *testing.T) {
-	for _, lineage := range []string{"development", "main"} {
-		t.Run(lineage, func(t *testing.T) {
-			db, err := Open(Config{Driver: "sqlite", DSN: filepath.Join(t.TempDir(), "merge-105.db")})
+func TestMergedSchemaPreservesRecentPublishedHistories(t *testing.T) {
+	for _, history := range []struct {
+		name                string
+		latest, upstreamAt  int64
+		hasCustomMigrations bool
+	}{
+		{"development105", 105, 0, true},
+		{"development108", 108, 0, true},
+		{"main105", 105, 105, false},
+		{"main105_then_development108", 108, 105, true},
+		{"main106", 106, 106, false},
+		{"main107", 107, 107, false},
+		{"main108", 108, 108, false},
+		{"main109", 109, 109, false},
+	} {
+		t.Run(history.name, func(t *testing.T) {
+			db, err := Open(Config{Driver: "sqlite", DSN: filepath.Join(t.TempDir(), "merge.db")})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -24,14 +37,21 @@ func TestMergedSchemaPreservesBothVersion105Histories(t *testing.T) {
 			if err := db.AutoMigrate(&schemaMigration{}); err != nil {
 				t.Fatal(err)
 			}
-			var before []schemaMigration
 			for _, item := range schemaMigrations {
-				if item.version > 102 {
-					if lineage == "main" && item.version >= 106 {
+				if history.upstreamAt != 0 && item.version > 102 {
+					if item.version >= 106 {
 						item.version -= 3
-					} else if lineage == "main" || item.version > 105 {
+						if item.version > history.upstreamAt {
+							continue
+						}
+					} else if history.hasCustomMigrations {
+						item.version += 3
+					} else {
 						continue
 					}
+				}
+				if item.version > history.latest {
+					continue
 				}
 				if err := item.apply(db); err != nil {
 					t.Fatalf("seed %s: %v", item.name, err)
@@ -40,7 +60,13 @@ func TestMergedSchemaPreservesBothVersion105Histories(t *testing.T) {
 				if err := db.Create(&row).Error; err != nil {
 					t.Fatal(err)
 				}
-				before = append(before, row)
+			}
+			var before []schemaMigration
+			if err := db.Order("version").Find(&before).Error; err != nil {
+				t.Fatal(err)
+			}
+			if len(before) == 0 || before[len(before)-1].Version != history.latest {
+				t.Fatalf("fixture did not reach version %d", history.latest)
 			}
 			for range 2 {
 				if err := MigrateSchema(db); err != nil {
@@ -50,10 +76,13 @@ func TestMergedSchemaPreservesBothVersion105Histories(t *testing.T) {
 				if err := db.Order("version").Find(&rows).Error; err != nil {
 					t.Fatal(err)
 				}
-				if len(rows) != len(before)+3 || rows[len(rows)-1].Version != 108 || !reflect.DeepEqual(rows[:len(before)], before) {
-					t.Fatalf("previous migration history changed or schema 108 incomplete: %d records", len(rows))
+				if len(rows) != len(schemaMigrations) || rows[len(rows)-1].Version != CurrentSchemaVersion || !reflect.DeepEqual(rows[:len(before)], before) {
+					t.Fatalf("previous migration history changed or schema %d incomplete: %d records", CurrentSchemaVersion, len(rows))
 				}
-				for _, table := range []any{&model.WalletOperation{}, &model.WantraceAsset{}, &model.MCPConnectionGrant{}, &model.AgentStorageUsage{}} {
+				if err := RequireSchemaVersion(db); err != nil {
+					t.Fatal(err)
+				}
+				for _, table := range []any{&model.WalletOperation{}, &model.WantraceAsset{}, &model.MCPConnectionGrant{}, &model.AgentStorageUsage{}, &model.Team{}, &model.TeamMembership{}, &model.CreditTransfer{}} {
 					if !db.Migrator().HasTable(table) {
 						t.Fatalf("missing %T", table)
 					}

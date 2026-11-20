@@ -14,7 +14,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 108
+const CurrentSchemaVersion int64 = 112
 
 const baselineSchemaChecksum = "sha256:open-ai-canvas-schema-v1-20260830"
 const schemaMigrationAppliedAtIndexChecksum = "sha256:schema-migrations-applied-at-index-v2-20260830"
@@ -376,6 +376,28 @@ var schemaMigrations = []migration{
 	{version: 106, name: "mcp_tenant_boundaries", checksum: "sha256:mcp-tenant-boundaries-v103", apply: migrateMCPTenantBoundaries},
 	{version: 107, name: "agent_storage_limits", checksum: "sha256:agent-storage-limits-v104", apply: migrateAgentStorageLimits},
 	{version: 108, name: "image_usage_billing", checksum: "sha256:image-usage-billing-v105", apply: migrateImageUsageBilling},
+	{version: 109, name: "team_workspaces", checksum: "sha256:team-workspaces-v106", apply: migrateTeamWorkspaces},
+	{version: 110, name: "company_workgroups", checksum: "sha256:company-workgroups-v107", apply: func(tx *gorm.DB) error {
+		return tx.AutoMigrate(&model.Team{})
+	}},
+	{version: 111, name: "shared_workspace_content", checksum: "sha256:shared-workspace-content-v108", apply: migrateSharedWorkspaceContent},
+	{version: 112, name: "model_protocol_releases", checksum: "sha256:model-protocol-releases-v109", apply: func(tx *gorm.DB) error {
+		for _, column := range []struct {
+			entity any
+			name   string
+		}{{&model.ChannelModel{}, "ProtocolRelease"}, {&model.Task{}, "ProtocolBindingJSON"}, {&model.RouteAttempt{}, "ProtocolBindingJSON"}} {
+			if !tx.Migrator().HasTable(column.entity) || tx.Migrator().HasColumn(column.entity, column.name) {
+				continue
+			}
+			if err := tx.Migrator().AddColumn(column.entity, column.name); err != nil {
+				return err
+			}
+		}
+		if !tx.Migrator().HasTable(&model.ChannelModel{}) || tx.Migrator().HasIndex(&model.ChannelModel{}, "ProtocolRelease") {
+			return nil
+		}
+		return tx.Migrator().CreateIndex(&model.ChannelModel{}, "ProtocolRelease")
+	}},
 }
 
 func migrateAPILogGenerationContent(tx *gorm.DB) error {
@@ -1026,7 +1048,7 @@ func migrationsForDatabase(db *gorm.DB) ([]migration, error) {
 	}
 	// 已发布分支曾把共享钱包放在 58/61/73/78/79/93。93–95 在两条分支上也有不同身份。
 	var records []schemaMigration
-	if err := db.Where("version IN ?", []int64{58, 61, 73, 78, 79, 93, 94, 95, 103, 104, 105}).Find(&records).Error; err != nil {
+	if err := db.Where("version IN ? OR version BETWEEN 103 AND 109", []int64{58, 61, 73, 78, 79, 93, 94, 95}).Find(&records).Error; err != nil {
 		return nil, fmt.Errorf("读取分支迁移历史：%w", err)
 	}
 	walletVersion := int64(103)
@@ -1034,7 +1056,7 @@ func migrationsForDatabase(db *gorm.DB) ([]migration, error) {
 	for _, record := range records {
 		appliedNames[record.Version] = record.Name
 		if record.Name == "shared_wallet_billing" {
-			if record.Version == 103 {
+			if record.Version >= 103 {
 				continue
 			}
 			switch record.Version {
@@ -1086,23 +1108,29 @@ func migrationsForDatabase(db *gorm.DB) ([]migration, error) {
 		versions["wantrace_assets"] = 95
 		versions["ark_private_asset_binding_identity"] = 105
 	}
-	// 主线已占用的编号保留原身份，定制迁移使用相应的空位。
-	upstreamNames := []string{"mcp_tenant_boundaries", "agent_storage_limits", "image_usage_billing"}
-	swaps := make(map[int64]int64)
-	for index, name := range upstreamNames {
-		original := int64(103 + index)
-		if appliedNames[original] == name {
-			swaps[original], swaps[original+3] = original+3, original
-		}
-	}
 	for index, item := range plan {
 		if version, ok := versions[item.name]; ok {
-			item.version = version
+			plan[index].version = version
 		}
-		if version, ok := swaps[item.version]; ok {
-			item.version = version
+	}
+	// 主线 103–109 在开发分支顺延三位。按主线发布顺序换位，保留既有记录，
+	// 包括已从旧主线升级过一次、用 106–108 记录定制迁移的数据库。
+	for _, item := range schemaMigrations {
+		if item.version < 106 || item.version > 112 {
+			continue
 		}
-		plan[index] = item
+		upstreamVersion := item.version - 3
+		if appliedNames[upstreamVersion] != item.name {
+			continue
+		}
+		for index := range plan {
+			switch plan[index].version {
+			case upstreamVersion:
+				plan[index].version = item.version
+			case item.version:
+				plan[index].version = upstreamVersion
+			}
+		}
 	}
 	sort.SliceStable(plan, func(i, j int) bool {
 		order := func(item migration) int64 {

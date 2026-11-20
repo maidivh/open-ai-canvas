@@ -369,12 +369,20 @@ func (s *Service) walletRequest(ctx context.Context, cfg model.SharedWalletSetti
 	return result, nil
 }
 
-func (s *Service) externalWalletSummary(user *model.User, cfg model.SharedWalletSettings, entryType string, page, limit int) (*WalletHistorySummary, error) {
-	member, err := s.repo.SharedWalletMember(user.ID, cfg)
+func (s *Service) externalWalletBalance(userID string, cfg model.SharedWalletSettings) (int64, error) {
+	member, err := s.repo.SharedWalletMember(userID, cfg)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	reply, err := s.walletRequest(context.Background(), cfg, "balance", map[string]any{"site_id": cfg.SiteID, "member_id": member})
+	if err != nil {
+		return 0, err
+	}
+	return reply.Balance * CreditScale, nil
+}
+
+func (s *Service) externalWalletSummary(user *model.User, cfg model.SharedWalletSettings, entryType string, page, limit int) (*WalletHistorySummary, error) {
+	balance, err := s.externalWalletBalance(user.ID, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -395,7 +403,7 @@ func (s *Service) externalWalletSummary(user *model.User, cfg model.SharedWallet
 			Model: entry.Model, Scene: entry.Scene, Note: userFacingTaskError(entry.Note), CreatedAt: entry.CreatedAt,
 		})
 	}
-	return &WalletHistorySummary{WalletMode: "external", RechargeURL: cfg.RechargeURL, Account: model.CreditAccount{UserID: user.ID, AvailableMicrocredits: reply.Balance * CreditScale}, Entries: history, Total: total, Page: page, Limit: limit}, nil
+	return &WalletHistorySummary{WalletMode: "external", RechargeURL: cfg.RechargeURL, Account: model.CreditAccount{UserID: user.ID, AvailableMicrocredits: balance}, Entries: history, Total: total, Page: page, Limit: limit}, nil
 }
 
 // embedded Repository keeps read/uncertain behavior unchanged; only lifecycle
