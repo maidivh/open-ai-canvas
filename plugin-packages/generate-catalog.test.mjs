@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { cp, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -128,4 +128,42 @@ test("Seedream regeneration preserves the published layer decomposition contract
   const provider = regenerated.contributes.providers[0];
   assert.ok(provider.create.body.layer_decomposition_options);
   assert.ok(provider.imageParameters.some((parameter) => parameter.name === "layerDecomposition"));
+});
+
+test("request package releases retain old bytes and require a new version for changed inputs", async (t) => {
+  const temp = await mkdtemp(join(tmpdir(), "yingce-request-release-"));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  const id = "agnes-video-25";
+  for (const name of ["build-packages.sh", "package-directories.mjs", "embed-documentation.mjs", "same-request-release.mjs", id]) {
+    await cp(join(root, name), join(temp, name), { recursive: true });
+  }
+  const archive = join(temp, id + ".yingce-plugin");
+  const source = join(temp, id);
+  const manifestPath = join(source, "manifest.json");
+  const build = () => execFileSync("sh", [join(temp, "build-packages.sh"), "--protocol", id], { stdio: "pipe" });
+
+  // Simulate a release created by an older ZIP tool and documentation generator.
+  const legacyDocs = join(source, "docs/interface.md");
+  await writeFile(legacyDocs, (await readFile(legacyDocs, "utf8")).replaceAll("\n", "\r\n"));
+  await chmod(legacyDocs, 0o755);
+  execFileSync("zip", ["-q", archive, "manifest.json", "README.md", "docs/interface.md"], { cwd: source });
+  await chmod(legacyDocs, 0o644);
+  const original = await readFile(archive);
+  build();
+  assert.deepEqual(await readFile(archive), original);
+
+  const manifest = await json(manifestPath);
+  manifest.contributes.providers[0].poll.path = "/updated/jobs";
+  await writeFile(manifestPath, JSON.stringify(manifest));
+  assert.throws(build, /increment the plugin version/);
+  assert.deepEqual(await readFile(archive), original);
+
+  manifest.version = "9.8.7";
+  await writeFile(manifestPath, JSON.stringify(manifest));
+  build();
+  const next = await readFile(archive);
+  assert.notDeepEqual(next, original);
+  await rm(archive);
+  build();
+  assert.deepEqual(await readFile(archive), next);
 });

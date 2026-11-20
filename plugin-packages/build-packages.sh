@@ -7,6 +7,15 @@ payment_plugins="official-payment-wechat-native official-payment-alipay-page off
 payments_only=false
 default_payment_targets="linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64"
 
+request_release() {
+  node -e '
+    const manifest = JSON.parse(require("node:fs").readFileSync(process.argv[1]));
+    if (manifest.contributes?.providers?.length) {
+      process.stdout.write(JSON.stringify([manifest.id, manifest.version]));
+    }
+  ' "$1"
+}
+
 package_plugin() {
   package_id=$1
   package_dir="$root_dir/$package_id"
@@ -15,23 +24,42 @@ package_plugin() {
   rm -f "$temporary_file"
   (
     cd "$package_dir"
-    if [ "$package_id" = kling-v4-official ]; then
+    set -- manifest.json README.md docs assets web backend LICENSE
+    release=$(request_release manifest.json)
+    if [ -n "$release" ]; then
       stage=$(mktemp -d)
       trap 'rm -rf "$stage"' EXIT
-      cp -R manifest.json README.md docs LICENSE "$stage/"
-      cd "$stage"
-      export TZ=UTC
-      find . -type f -exec chmod 644 {} + -exec touch -t 200001010000 {} +
+      if [ -f "$output_file" ]; then
+        mkdir "$stage/published"
+        unzip -q "$output_file" -d "$stage/published"
+        previous_release=$(request_release "$stage/published/manifest.json")
+        if [ "$release" = "$previous_release" ]; then
+          # Keep the exact published bytes when a checkout only changed timestamps or documentation newlines.
+          if node "$root_dir/same-request-release.mjs" "$package_dir" "$stage/published" "$@"; then exit 0; fi
+          echo "$package_id: the published archive changed; increment the plugin version before packaging" >&2
+          exit 1
+        fi
+      fi
     fi
-    find manifest.json README.md docs assets web backend LICENSE -type f 2>/dev/null | LC_ALL=C sort | zip -X -q "$temporary_file" -@
+    # Regenerate documents only after recognizing unchanged published request packages.
+    node "$root_dir/embed-documentation.mjs" "$package_id"
+    if [ -n "$release" ]; then
+      mkdir "$stage/files"
+      for entry do
+        if [ -e "$entry" ]; then cp -Rp "$entry" "$stage/files/"; fi
+      done
+      cd "$stage/files"
+      export TZ=UTC
+      find . -type f -exec chmod a=rX,u+w {} + -exec touch -t 200001010000 {} +
+    fi
+    find "$@" -type f 2>/dev/null | LC_ALL=C sort | zip -X -q "$temporary_file" -@
   )
-  mv "$temporary_file" "$output_file"
+  if [ -f "$temporary_file" ]; then mv "$temporary_file" "$output_file"; fi
 }
 
 if [ "${1:-}" = "--protocol" ] && [ "$#" -eq 2 ]; then
   case "$2" in ''|*[!a-z0-9-]*|official-payment-*) exit 2 ;; esac
   [ -f "$root_dir/$2/manifest.json" ]
-  node "$root_dir/embed-documentation.mjs" "$2"
   package_plugin "$2"
   exit 0
 fi
@@ -43,12 +71,6 @@ fi
 if [ "$#" -ne 0 ]; then
   echo "usage: $0 [--payments-only | --protocol ID]" >&2
   exit 2
-fi
-
-if [ "$payments_only" = true ]; then
-  node "$root_dir/embed-documentation.mjs" $payment_plugins
-else
-  node "$root_dir/embed-documentation.mjs"
 fi
 
 # Payment backends are executable plugin payloads. Unset PAYMENT_PLUGIN_GOOS

@@ -340,6 +340,7 @@ const arkSeedanceResponse = {
 
 add({
   id: "volcengine-ark-seedance", providerId: "volcengine-ark-video", name: "火山方舟 Seedance 官方视频生成", vendor: "Volcengine", capability: "video",
+  version: "2.0.1",
   videoReferences: numberedImages("content"),
   description: "火山方舟官方 Seedance 视频生成接口，使用普通 /api/v3 Contents Generations Tasks 和方舟推理 API Key；不是 Agent Plan 专用线路。",
   readmeIntro: "火山方舟官方声明式协议插件，面向普通 `/api/v3` Contents Generations Tasks 视频生成接口。使用普通方舟 API Key 和 Endpoint，可接入 Seedance 视频模型。",
@@ -355,6 +356,7 @@ add({
 
 add({
   id: "volcengine-ark-agent-plan-seedance", providerId: "volcengine-ark-agent-plan-video", name: "火山方舟 Seedance Agent Plan 视频接口", vendor: "Volcengine", capability: "video",
+  version: "2.0.1",
   videoReferences: numberedImages("content"),
   description: "火山方舟 Agent Plan 专用 Seedance /api/plan/v3 视频生成接口，需要专用 API Key 和 AFP 额度；与普通 /api/v3 分开配置。",
   readmeIntro: "火山方舟 Agent Plan 专用声明式协议插件，使用 `/api/plan/v3` 视频生成接口。需要 Agent Plan 专用 API Key 和 AFP 额度，不能与普通 `/api/v3` 方舟接口混用。",
@@ -579,6 +581,7 @@ const newAPITaskMessage = coalesce(
 
 add({
   id: "newapi-media-task-v1", providerId: "newapi-channel-1", name: "NewAPI Media Task Channel 1", vendor: "NewAPI", capability: "video",
+  version: "2.0.1",
   videoReferences: numberedImages("input-media"),
   baseUrl: "http://127.0.0.1:3000", auth: bearer, params: videoParams, requiresPublicMediaUrls: true,
   create: jsonCreate("/v1/videos", {
@@ -602,6 +605,7 @@ add({
 
 add({
   id: "newapi-video-generations-v1", providerId: "newapi-channel-2", name: "NewAPI Video Generations Channel 2", vendor: "NewAPI", capability: "video",
+  version: "2.0.1",
   videoReferences: numberedImages("image-urls"),
   baseUrl: "http://127.0.0.1:3000", auth: bearer, params: videoParams, requiresPublicMediaUrls: true,
   create: jsonCreate("/v1/video/generations", {
@@ -626,6 +630,7 @@ add({
 
 add({
   id: "rolldek-wan-video", providerId: "rolldek-wan-video", name: "RollDek WAN 3.0 Video", vendor: "RollDek", capability: "video",
+  version: "2.0.1",
   videoReferences: numberedImages("role-reference-images"),
   baseUrl: "https://rolldek.com", auth: bearer, params: videoParams, requiresPublicMediaUrls: true,
   notes: "该协议严格对应 RollDek WAN 3.0 的 JSON /v1/videos 合同。RollDek 同时暴露的其他兼容创建入口不共享任务查询路径，不能与 NewAPI Video Generations Channel 2 混用。",
@@ -708,6 +713,7 @@ add({
 
 add({
   id: "volcengine-jimeng-video", providerId: "volcengine-jimeng-video", name: "火山即梦 官方视频生成", vendor: "Volcengine", capability: "video",
+  version: "2.0.1",
   videoReferences: numberedImages("image-urls"),
   description: "火山即梦 Visual API 视频生成接口，使用 API Key 与 Secret Key；协议和凭证不同于火山方舟 Seedance。",
   readmeIntro: "火山即梦 Visual API 官方声明式视频协议插件，使用 API Key 与 Secret Key。它与火山方舟 Seedance 使用不同的接口协议和凭证。",
@@ -729,6 +735,7 @@ const agnesReferenceMode = { $or: [gt(len(agnesReferenceImages), 0), gt(len(ref(
 
 add({
   id: "agnes-video-25", providerId: "agnes-video", name: "Agnes Video 2.5 / 2.5 Flash", vendor: "Agnes AI", capability: "video",
+  version: "2.0.1",
   videoReferences: numberedImages("images"),
   baseUrl: "https://apihub.agnes-ai.com/v1", auth: bearer, params: videoParams, requiresPublicMediaUrls: true,
   validations: [
@@ -999,6 +1006,7 @@ const minimaxRatio = ref("request.output.aspectRatio");
 
 add({
   id: "dashscope-minimax-video", providerId: "dashscope-minimax-video", name: "百炼 MiniMax H3 Video", vendor: "Alibaba Cloud", capability: "video",
+  version: "2.0.1",
   videoReferences: numberedImages("input-image-media"),
   baseUrl: "", auth: bearer, requiresPublicMediaUrls: true,
   params: [
@@ -1131,6 +1139,7 @@ add({
 
 add({
   id: "dashscope-wan-video", providerId: "dashscope-wan-video", name: "DashScope Wan Video", vendor: "Alibaba Cloud", capability: "video",
+  version: "2.0.1",
   videoReferences: numberedImages("input-reference-images"),
   baseUrl: "https://dashscope.aliyuncs.com", auth: bearer, params: videoParams, requiresPublicMediaUrls: true,
   validations: [
@@ -1327,6 +1336,7 @@ for (const [id, name, vendor, capability, baseUrl, createPath, pollPath, request
   }
   add({
     id, providerId: id, name, vendor, capability, baseUrl, auth, params, configuration,
+    version: id === "seedance-videos-compatible" ? "2.0.1" : undefined,
     videoReferences: id === "seedance-videos-compatible" ? numberedImages("images") : undefined,
     notes: `该协议的模型级字段变化快或依赖云资源配置。插件固定线协议入口和统一字段，完整厂商对象通过 providerOptions.${id} 的 parameters/input/extra_body 传入；${requestShape}。云签名型入口在未配置对应鉴权驱动时会明确失败，不会伪装成 Bearer 成功。`,
     create: jsonCreate(createPath, standard, operationExtra),
