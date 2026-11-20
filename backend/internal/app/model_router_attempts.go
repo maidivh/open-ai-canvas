@@ -395,9 +395,20 @@ func (s *Service) blockLogicalRouteForFailure(attempt *model.RouteAttempt, taskE
 	}
 }
 
-func (s *Service) prepareLogicalTaskRetry(task *model.Task, input map[string]any) error {
-	if task == nil || task.LogicalModelID == "" {
-		return nil
+func (s *Service) prepareTaskRetryModel(task *model.Task, input map[string]any) error {
+	if task.LogicalModelID == "" {
+		if !taskInputUsesSystemChannel(input) || taskInputUsesWorkflowProvider(input) {
+			return nil
+		}
+		access, err := s.userGroupAccess(task.UserID)
+		if err != nil {
+			return err
+		}
+		input, err = s.resolveSystemChannelModelSelection(access, input, task.Type, task.Operation)
+		if err != nil {
+			return err
+		}
+		return s.bindTaskRetryInput(task, input, nil)
 	}
 	intent := ModelRequestIntentFromTaskInput(input, task.Type, task.Operation)
 	logicalModel, err := s.repo.LogicalModel(task.LogicalModelID)
@@ -419,7 +430,16 @@ func (s *Service) prepareLogicalTaskRetry(task *model.Task, input map[string]any
 		return err
 	}
 	input = applyRoutedProviderSelection(input, routed)
-	task.ProtocolBindingJSON, err = s.captureTaskProtocolBinding(input, &routed.ChannelModel)
+	task.LogicalModelRevisionID = routed.Revision.ID
+	task.RouteID = routed.Route.ID
+	task.ChannelModelID = routed.ChannelModel.ID
+	task.Model = routed.LogicalModel.Code
+	task.Provider = "managed"
+	return s.bindTaskRetryInput(task, input, &routed.ChannelModel)
+}
+
+func (s *Service) bindTaskRetryInput(task *model.Task, input map[string]any, selected *model.ChannelModel) error {
+	binding, err := s.captureTaskProtocolBinding(input, selected)
 	if err != nil {
 		return err
 	}
@@ -433,11 +453,7 @@ func (s *Service) prepareLogicalTaskRetry(task *model.Task, input map[string]any
 	if err != nil {
 		return err
 	}
-	task.LogicalModelRevisionID = routed.Revision.ID
-	task.RouteID = routed.Route.ID
-	task.ChannelModelID = routed.ChannelModel.ID
-	task.Model = routed.LogicalModel.Code
-	task.Provider = "managed"
+	task.ProtocolBindingJSON = binding
 	task.InputJSON = string(encoded)
 	return nil
 }

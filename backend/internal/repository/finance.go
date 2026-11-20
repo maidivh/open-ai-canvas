@@ -213,8 +213,8 @@ func (r *Repository) RetryTaskWithBilling(userID string, prepared *model.Task, o
 		if task.Status != model.TaskStatusFailed && task.Status != model.TaskStatusCancelled {
 			return ErrTaskNotRetryable
 		}
+		var previous model.BillingOrder
 		if task.BillingOrderID != "" {
-			var previous model.BillingOrder
 			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&previous, "id = ? AND user_id = ? AND task_id = ?", task.BillingOrderID, userID, task.ID).Error; err != nil {
 				return err
 			}
@@ -238,6 +238,21 @@ func (r *Repository) RetryTaskWithBilling(userID string, prepared *model.Task, o
 			default:
 				return ErrTaskBillingReview
 			}
+		}
+		if order != nil && task.LogicalModelID == "" && (task.ProtocolBindingJSON != "" || prepared.ProtocolBindingJSON != "") {
+			// 直接渠道重试重新绑定当前版本；旧任务的授权不能转给其他账户，也不能随新价格扩大。
+			ceiling := max(previous.ReservedAmountMicrocredits, previous.AmountMicrocredits)
+			if billingChargeLimitApplies(previous) {
+				ceiling = previous.ChargeLimitMicrocredits
+			}
+			requested := max(order.AmountMicrocredits, order.ReservedAmountMicrocredits, order.ChargeLimitMicrocredits)
+			walletChanged := (previous.WalletMode == "external") != (order.WalletMode == "external") ||
+				(previous.WalletMode == "external" && previous.WalletVersion != order.WalletVersion)
+			modelChanged := previous.ChannelModelID != "" && previous.ChannelModelID != order.ChannelModelID
+			if requested > ceiling || (previous.ID != "" && walletChanged) || modelChanged {
+				return ErrBillingChargeLimit
+			}
+			order.ChargeLimitSet, order.ChargeLimitMicrocredits = true, requested
 		}
 		if err := enforceActiveTaskLimit(tx, userID, activeTaskLimit); err != nil {
 			return err

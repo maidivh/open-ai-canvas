@@ -112,6 +112,66 @@ func TestModelReleaseSurvivesUpgradeAndRestart(t *testing.T) {
 		t.Fatal("accepted unrelated provider")
 	}
 	newSKU := save("flash", second.SHA256, nil)
+	t.Run("direct channel retry binds the release used to price the new order", func(t *testing.T) {
+		sku := save("retry-sku", first.SHA256, nil)
+		job := create(sku.ModelKey)
+		if err := svc.repo.RefundBillingOrder(job.BillingOrderID, "首次调用失败"); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Model(job).Update("status", model.TaskStatusFailed).Error; err != nil {
+			t.Fatal(err)
+		}
+		save(sku.ModelKey, second.SHA256, sku)
+		if _, err := svc.RetryTask(userID, job.ID); err != nil {
+			t.Fatal(err)
+		}
+		retried, err := svc.repo.Task(job.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		binding, err := decodeTaskProtocolBinding(retried.ProtocolBindingJSON)
+		if err != nil || binding.Digest != second.SHA256 {
+			t.Fatalf("retry did not bind the current release: %s, %v", binding.Digest, err)
+		}
+		bill, err := svc.repo.BillingOrder(retried.BillingOrderID)
+		if err != nil || bill.ID == job.BillingOrderID || bill.ChannelModelID != binding.ChannelModelID || bill.PriceVersion != binding.PriceVersion {
+			t.Fatalf("retry bill and protocol binding disagree: %+v, %v", bill, err)
+		}
+		if err := svc.repo.RefundBillingOrder(bill.ID, "再次失败"); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Model(retried).Update("status", model.TaskStatusFailed).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Model(&model.ChannelModelPriceTier{}).Where("id = ?", bill.PriceTierID).Update("unit_price_microcredits", 1_000_000).Error; err != nil {
+			t.Fatal(err)
+		}
+		if _, err := svc.RetryTask(userID, job.ID); err == nil || !strings.Contains(err.Error(), "原授权") {
+			t.Fatalf("retry accepted a price above the previous authorization: %v", err)
+		}
+		if err := db.Model(&model.ChannelModelPriceTier{}).Where("id = ?", bill.PriceTierID).Update("unit_price_microcredits", 0).Error; err != nil {
+			t.Fatal(err)
+		}
+		setting, err := svc.repo.SystemSetting(model.SharedWalletSettingKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Model(setting).Update("value_json", `{"mode":"external","version":1}`).Error; err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := db.Model(setting).Update("value_json", `{"mode":"internal","version":0}`).Error; err != nil {
+				t.Error(err)
+			}
+		})
+		if _, err := svc.RetryTask(userID, job.ID); err == nil || !strings.Contains(err.Error(), "原授权") {
+			t.Fatalf("retry switched a personal order to an external wallet: %v", err)
+		}
+		var count int64
+		if err := db.Model(&model.BillingOrder{}).Where("task_id = ?", job.ID).Count(&count).Error; err != nil || count != 2 {
+			t.Fatalf("requote changed billing history: %d, %v", count, err)
+		}
+	})
 	if first.SHA256 != save(oldSKU.ModelKey, "", oldSKU).ProtocolRelease {
 		t.Fatal("ordinary edit upgraded the old model")
 	}

@@ -74,7 +74,7 @@ func (w *taskLifecycleCoordinator) retryTask(userID string, id string) (*model.T
 	if err := s.requireTaskGenerationFeatures(userID, task.ProjectID, task.Type, task.Operation, task.WorkbenchKind, billingInput); err != nil {
 		return nil, err
 	}
-	if err := s.prepareLogicalTaskRetry(task, billingInput); err != nil {
+	if err := s.prepareTaskRetryModel(task, billingInput); err != nil {
 		return nil, err
 	}
 	if err := s.requireCustomChannelsForTaskInput(billingInput); err != nil {
@@ -83,6 +83,15 @@ func (w *taskLifecycleCoordinator) retryTask(userID string, id string) (*model.T
 	billingOrder, err := s.taskBillingOrder(userID, task, billingInput)
 	if err != nil {
 		return nil, err
+	}
+	if task.LogicalModelID == "" && task.ProtocolBindingJSON != "" && billingOrder != nil {
+		binding, err := decodeTaskProtocolBinding(task.ProtocolBindingJSON)
+		if err != nil {
+			return nil, err
+		}
+		if billingOrder.ChannelModelID != binding.ChannelModelID || billingOrder.PriceVersion != binding.PriceVersion {
+			return nil, InvalidModelSelection("模型配置已更新，请重新报价后提交")
+		}
 	}
 	policy, err := s.RuntimePolicy()
 	if err != nil {
@@ -94,6 +103,9 @@ func (w *taskLifecycleCoordinator) retryTask(userID string, id string) (*model.T
 	task, err = s.repo.RetryTaskWithBilling(userID, task, billingOrder, policy.Task.ActiveTaskLimit, authorizeRetryBillingRelease)
 	if errors.Is(err, repository.ErrTaskBillingReview) {
 		return nil, BadAuthRequest("上一次调用费用仍在核对中，处理完成前不能重复提交")
+	}
+	if errors.Is(err, repository.ErrBillingChargeLimit) {
+		return nil, BadAuthRequest("重试的模型、钱包或报价超出原授权，请重新报价后提交")
 	}
 	if errors.Is(err, repository.ErrInsufficientCredits) {
 		return nil, BadAuthRequest(internalCreditsFailureMessage)
